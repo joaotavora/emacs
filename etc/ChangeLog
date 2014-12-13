@@ -1,3 +1,9 @@
+2014-12-13  Cameron Desautels  <camdez@gmail.com>
+
+	* NEWS: Mention `custom-prompt-customize-unsaved-options'.
+
+	* TODO: Remove its entry.
+
 2014-12-09  Lars Magne Ingebrigtsen  <larsi@gnus.org>
 
 	* NEWS: Mention directory-files-recursively.
