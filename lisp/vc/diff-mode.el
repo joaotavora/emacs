@@ -1799,7 +1799,8 @@ With a prefix argument, REVERSE the hunk."
       (with-current-buffer buf
 	(goto-char (car pos))
 	(delete-region (car pos) (cdr pos))
-	(insert (car new)))
+	(insert (decode-coding-string (car new)
+	                              buffer-file-coding-system)))
       ;; Display BUF in a window
       (set-window-point (display-buffer buf) (+ (car pos) (cdr new)))
       (diff-hunk-status-msg line-offset (diff-xor switched reverse) nil)
