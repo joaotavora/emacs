@@ -1093,7 +1093,7 @@ for the MODE to customize."
                        (or (and (get symbol 'custom-loads)
                                 (not (get symbol 'custom-autoload)))
                            (get symbol 'custom-group)))
-                     t)))
+                     t nil nil "emacs")))
 
 ;;;###autoload
 (defun customize-group (&optional group other-window)
