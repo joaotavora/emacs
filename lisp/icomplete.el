@@ -145,12 +145,24 @@ icompletion is occurring."
 
 (defvar icomplete-minibuffer-map
   (let ((map (make-sparse-keymap)))
-    (define-key map [?\M-\t] 'minibuffer-force-complete)
+    (define-key map [?\M-\t] 'icomplete-force-complete)
     (define-key map [?\C-j]  'icomplete-force-complete-and-exit)
     (define-key map [?\C-.]  'icomplete-forward-completions)
     (define-key map [?\C-,]  'icomplete-backward-completions)
     map)
   "Keymap used by `icomplete-mode' in the minibuffer.")
+
+(defun icomplete-force-complete ()
+  "Complete the minibuffer.
+Like `minibuffer-force-complete', but don't cycle."
+  (interactive)
+  ;; FIXME: it _could_ make sense to cycle in certain situations, by
+  ;; analyzing the current thing and the thing to cycle to for
+  ;; instance.  Unfortunately that can't be done until a _very nasty
+  ;; hack_ in `minibuffer-force-complete' is removed.  That hack uses
+  ;; transient maps and prevents two consecutive calls to
+  ;; `icomplete-force-complete'.
+  (minibuffer-force-complete nil nil t))
 
 (defun icomplete-force-complete-and-exit ()
   "Complete the minibuffer and exit.
