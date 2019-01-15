@@ -1,4 +1,4 @@
-;;; icomplete.el --- minibuffer completion incremental feedback
+;;; icomplete.el --- minibuffer completion incremental feedback -*- lexical-binding: t -*-
 
 ;; Copyright (C) 1992-1994, 1997, 1999, 2001-2019 Free Software
 ;; Foundation, Inc.
@@ -162,9 +162,6 @@ the default otherwise."
       (minibuffer-force-complete-and-exit)
     (minibuffer-complete-and-exit)))
 
-(defvar icomplete--filtered-completions nil
-  "If non-nil completions as filtered by `icomplete-completions'")
-
 (defun icomplete-forward-completions ()
   "Step forward completions by one entry.
 Second entry becomes the first and can be selected with
@@ -172,8 +169,7 @@ Second entry becomes the first and can be selected with
   (interactive)
   (let* ((beg (icomplete--field-beg))
          (end (icomplete--field-end))
-         (comps (or icomplete--filtered-completions
-                    (completion-all-sorted-completions beg end)))
+         (comps (completion-all-sorted-completions beg end))
 	 (last (last comps)))
     (when comps
       (setcdr last (cons (car comps) (cdr last)))
@@ -186,8 +182,7 @@ Last entry becomes the first and can be selected with
   (interactive)
   (let* ((beg (icomplete--field-beg))
          (end (icomplete--field-end))
-         (comps (or icomplete--filtered-completions
-                    (completion-all-sorted-completions beg end)))
+         (comps (completion-all-sorted-completions beg end))
 	 (last-but-one (last comps 2))
 	 (last (cdr last-but-one)))
     (when (consp last)		      ; At least two elements in comps
@@ -373,8 +368,21 @@ If there are multiple possibilities, `icomplete-separator' separates them.
 The displays for unambiguous matches have ` [Matched]' appended
 \(whether complete or not), or ` [No matches]', if no eligible
 matches exist."
-  (let* ((minibuffer-completion-table candidates)
-	 (minibuffer-completion-predicate predicate)
+  (let* ((ignored-extension-re
+          (and minibuffer-completing-file-name
+               icomplete-with-completion-tables
+               completion-ignored-extensions
+               (concat "\\(?:\\`\\.\\./\\|"
+                       (regexp-opt completion-ignored-extensions)
+                       "\\)\\'")))
+         (minibuffer-completion-table candidates)
+	 (minibuffer-completion-predicate
+          (if ignored-extension-re
+              (lambda (cand)
+                (and (not (string-match ignored-extension-re cand))
+                     (or (null predicate)
+                         (funcall predicate cand))))
+            predicate))
 	 (md (completion--field-metadata (icomplete--field-beg)))
 	 (comps (completion-all-sorted-completions
                  (icomplete--field-beg) (icomplete--field-end)))
@@ -385,13 +393,8 @@ matches exist."
     ;; `concat'/`mapconcat' is the slow part.
     (if (not (consp comps))
 	(progn ;;(debug (format "Candidates=%S field=%S" candidates name))
-	       (format " %sNo matches%s" open-bracket close-bracket))
+	  (format " %sNo matches%s" open-bracket close-bracket))
       (if last (setcdr last nil))
-      (if (and minibuffer-completing-file-name
-               icomplete-with-completion-tables)
-          (setq comps (completion-pcm--filename-try-filter comps)
-                icomplete--filtered-completions comps)
-        (setq icomplete--filtered-completions nil))
       (let* ((most-try
               (if (and base-size (> base-size 0))
                   (completion-try-completion
@@ -477,11 +480,11 @@ matches exist."
 		  (if prefix-len (substring (car comps) prefix-len) (car comps))
 		  comps (cdr comps))
 	    (setq prospects-len
-                           (+ (string-width comp)
-			      (string-width icomplete-separator)
-			      prospects-len))
-		     (if (< prospects-len prospects-max)
-			 (push comp prospects)
+                  (+ (string-width comp)
+		     (string-width icomplete-separator)
+		     prospects-len))
+	    (if (< prospects-len prospects-max)
+		(push comp prospects)
 	      (setq limit t))))
 	(setq prospects (nreverse prospects))
 	;; Decorate first of the prospects.
