@@ -1257,29 +1257,32 @@ scroll the window of possible completions."
 (defun minibuffer-force-complete-and-exit ()
   "Complete the minibuffer with first of the matches and exit."
   (interactive)
-  (minibuffer-force-complete)
+  (minibuffer-force-complete nil nil t)
   (completion--complete-and-exit
    (minibuffer-prompt-end) (point-max) #'exit-minibuffer
    ;; If the previous completion completed to an element which fails
    ;; test-completion, then we shouldn't exit, but that should be rare.
    (lambda () (minibuffer-message "Incomplete"))))
 
-(defun minibuffer-force-complete (&optional start end)
-  "Complete the minibuffer to an exact match.
-Repeated uses step through the possible completions."
+(defun minibuffer-force-complete (&optional start end dont-cycle)
+  "Complete the minibuffer string between START and END to an exact match.
+Repeated uses step through the possible completions, unless
+prevented to do so by DONT-CYCLE."
   (interactive)
   (setq minibuffer-scroll-window nil)
   ;; FIXME: Need to deal with the extra-size issue here as well.
   ;; FIXME: ~/src/emacs/t<M-TAB>/lisp/minibuffer.el completes to
   ;; ~/src/emacs/trunk/ and throws away lisp/minibuffer.el.
+  ;; FIXME: shouldn't we cycle _before_ instead of after forcing??
   (let* ((start (copy-marker (or start (minibuffer-prompt-end))))
          (end (or end (point-max)))
          ;; (md (completion--field-metadata start))
          (all (completion-all-sorted-completions start end))
-         (base (+ start (or (cdr (last all)) 0))))
+         (base (+ start (or (cdr (last all)) 0)))
+         last second-last)
     (cond
      ((not (consp all))
-        (completion--message
+      (completion--message
        (if all "No more completions" "No completions")))
      ((not (consp (cdr all)))
       (let ((done (equal (car all) (buffer-substring-no-properties base end))))
@@ -1287,36 +1290,48 @@ Repeated uses step through the possible completions."
         (completion--done (buffer-substring-no-properties start (point))
                           'finished (when done "Sole completion"))))
      (t
+      (setq second-last (last all 2)
+            last        (cdr second-last))
+      ;; If we happened to be already cycling, we must undo the
+      ;; effects of the last rotation (get out yer' pen and paper to
+      ;; get the cons cell math).
+      (when (and dont-cycle completion-cycling)
+        (let ((lastcdr (cddr second-last)))
+          (setcdr (cdr second-last) all)
+          (setq all (cdr second-last))
+          (setcdr second-last lastcdr)
+          (setq last second-last)))
       (completion--replace base end (car all))
       (setq end (+ base (length (car all))))
       (completion--done (buffer-substring-no-properties start (point)) 'sole)
-      ;; Set cycling after modifying the buffer since the flush hook resets it.
-      (setq completion-cycling t)
-      (setq this-command 'completion-at-point) ;For completion-in-region.
-      ;; If completing file names, (car all) may be a directory, so we'd now
-      ;; have a new set of possible completions and might want to reset
-      ;; completion-all-sorted-completions to nil, but we prefer not to,
-      ;; so that repeated calls minibuffer-force-complete still cycle
-      ;; through the previous possible completions.
-      (let ((last (last all)))
+      (unless dont-cycle
+        ;; Set cycling after modifying the buffer since the flush hook resets it.
+        (setq completion-cycling t)
+        (setq this-command 'completion-at-point) ;For completion-in-region.
+        ;; Rotate the completions collected earlier and cache them.  If
+        ;; completing file names, (car all) may be a directory, so we'd
+        ;; now have a new set of possible completions and might want to
+        ;; reset completion-all-sorted-completions to nil, but we prefer
+        ;; not to, so that repeated calls minibuffer-force-complete
+        ;; still cycle through the previous possible completions.
         (setcdr last (cons (car all) (cdr last)))
-        (completion--cache-all-sorted-completions start end (cdr all)))
-      ;; Make sure repeated uses cycle, even though completion--done might
-      ;; have added a space or something that moved us outside of the field.
-      ;; (bug#12221).
-      (let* ((table minibuffer-completion-table)
-             (pred minibuffer-completion-predicate)
-             (extra-prop completion-extra-properties)
-             (cmd
-              (lambda () "Cycle through the possible completions."
-                (interactive)
-                (let ((completion-extra-properties extra-prop))
-                  (completion-in-region start (point) table pred)))))
-        (set-transient-map
-         (let ((map (make-sparse-keymap)))
-           (define-key map [remap completion-at-point] cmd)
-           (define-key map (vector last-command-event) cmd)
-           map)))))))
+        (completion--cache-all-sorted-completions start end (cdr all))
+        ;; Make sure repeated uses cycle, even though completion--done
+        ;; might have added a space or something that moved us outside
+        ;; of the field.  (bug#12221).
+        (let* ((table minibuffer-completion-table)
+               (pred minibuffer-completion-predicate)
+               (extra-prop completion-extra-properties)
+               (cmd
+                (lambda () "Cycle through the possible completions."
+                  (interactive)
+                  (let ((completion-extra-properties extra-prop))
+                    (completion-in-region start (point) table pred)))))
+          (set-transient-map
+           (let ((map (make-sparse-keymap)))
+             (define-key map [remap completion-at-point] cmd)
+             (define-key map (vector last-command-event) cmd)
+             map))))))))
 
 (defvar minibuffer-confirm-exit-commands
   '(completion-at-point minibuffer-complete
