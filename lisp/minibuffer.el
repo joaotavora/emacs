@@ -922,31 +922,35 @@ This overrides the defaults specified in `completion-category-defaults'."
   ;; The quote/unquote function needs to come from the completion table (rather
   ;; than from completion-extra-properties) because it may apply only to some
   ;; part of the string (e.g. substitute-in-file-name).
-  (let ((requote
-         (when (and
-                (completion-metadata-get metadata 'completion--unquote-requote)
-                ;; Sometimes a table's metadata is used on another
-                ;; table (typically that other table is just a list taken
-                ;; from the output of `all-completions' or something equivalent,
-                ;; for progressive refinement).  See bug#28898 and bug#16274.
-                ;; FIXME: Rather than do nothing, we should somehow call
-                ;; the original table, in that case!
-                (functionp table))
-           (let ((new (funcall table string point 'completion--unquote)))
-             (setq string (pop new))
-             (setq table (pop new))
-             (setq point (pop new))
-	     (cl-assert (<= point (length string)))
-             (pop new))))
-        (result
-         (completion--some (lambda (style)
-                             (funcall (nth n (assq style
-                                                   completion-styles-alist))
-                                      string table pred point))
-                           (completion--styles metadata))))
+  (let* ((requote
+          (when (and
+                 (completion-metadata-get metadata 'completion--unquote-requote)
+                 ;; Sometimes a table's metadata is used on another
+                 ;; table (typically that other table is just a list taken
+                 ;; from the output of `all-completions' or something equivalent,
+                 ;; for progressive refinement).  See bug#28898 and bug#16274.
+                 ;; FIXME: Rather than do nothing, we should somehow call
+                 ;; the original table, in that case!
+                 (functionp table))
+            (let ((new (funcall table string point 'completion--unquote)))
+              (setq string (pop new))
+              (setq table (pop new))
+              (setq point (pop new))
+              (cl-assert (<= point (length string)))
+              (pop new))))
+         (result-and-style
+          (catch 'done
+            (dolist (style (completion--styles metadata))
+              (let ((probe (funcall (nth n (assq style
+                                                 completion-styles-alist))
+                                    string table pred point)))
+                (when probe
+                  (throw 'done (cons probe style))))))))
+    (push `(completion--used-style . ,(cdr result-and-style))
+          (cdr metadata))
     (if requote
-        (funcall requote result n)
-      result)))
+        (funcall requote (car result-and-style) n)
+      (car result-and-style))))
 
 (defun completion-try-completion (string table pred point &optional metadata)
   "Try to complete STRING using completion table TABLE.
@@ -1257,7 +1261,10 @@ scroll the window of possible completions."
                                            base-size md
                                            minibuffer-completion-table
                                            minibuffer-completion-predicate))
-             (sort-fun (completion-metadata-get all-md 'cycle-sort-function)))
+             (sort-fun (completion-metadata-get all-md 'cycle-sort-function))
+             (style-sort-fun
+              (get (completion-metadata-get all-md 'completion--used-style)
+                   'style-sort-function)))
         (when last
           (setcdr last nil)
 
@@ -1267,9 +1274,14 @@ scroll the window of possible completions."
           (setq all (delete-dups all))
           (setq last (last all))
 
+          ;; Handle sorting.
+          ;;
           (cond
            (sort-fun
+            ;; TODO: Maybe let the style have a say here, too?
             (setq all (funcall sort-fun all)))
+           (style-sort-fun
+            (setq all (funcall style-sort-fun all)))
            (t
             ;; Prefer shorter completions, by default.
             (setq all (sort all (lambda (c1 c2) (< (length c1) (length c2)))))
@@ -1899,10 +1911,16 @@ variables.")
                 ;; not completion-all-completions.  Often it's the same, but
                 ;; not always.
                 (let ((sort-fun (completion-metadata-get
-                                 all-md 'display-sort-function)))
-                  (if sort-fun
-                      (funcall sort-fun completions)
-                    (sort completions 'string-lessp))))
+                                 all-md 'display-sort-function))
+                      (style-sort-fun
+                       (get (completion-metadata-get all-md 'completion--used-style)
+                            'style-sort-function)))
+                  (cond (sort-fun
+                         (funcall sort-fun completions))
+                        (style-sort-fun
+                         (funcall style-sort-fun completions))
+                        (t
+                         (sort completions 'string-lessp)))))
           (when afun
             (setq completions
                   (mapcar (lambda (s)
@@ -3065,6 +3083,14 @@ I.e \"foo\" matches both strings \"barbazfoo\" and \"fabrobazo\",
 which are of equal length, but only a value greater than one will
 score the former (which has one \"hole\") higher than the
 latter (which has two).")
+
+(put 'flex 'style-sort-function 'completion-flex-sort-by-score)
+
+(defun completion-flex-sort-by-score (completions)
+  (sort completions (lambda (c1 c2)
+                      (or (equal c1 minibuffer-default)
+                          (> (get-text-property 0 'completion-score c1)
+                             (get-text-property 0 'completion-score c2))))))
 
 (defun completion-pcm--hilit-commonality (pattern completions)
   (when completions
