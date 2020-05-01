@@ -5,7 +5,7 @@
 ;; Author: João Távora <joaotavora@gmail.com>
 ;; Keywords: processes, languages, extensions
 ;; Package-Requires: ((emacs "25.2"))
-;; Version: 1.0.9
+;; Version: 1.0.10
 
 ;; This is an Elpa :core package.  Don't use functionality that is not
 ;; compatible with Emacs 25.2.
@@ -365,9 +365,30 @@ connection object, called when the process dies .")
 (cl-defmethod initialize-instance ((conn jsonrpc-process-connection) slots)
   (cl-call-next-method)
   (let* ((proc (plist-get slots :process))
-         (proc (if (functionp proc) (funcall proc) proc))
-         (buffer (get-buffer-create (format "*%s output*" (process-name proc))))
-         (stderr (get-buffer-create (format "*%s stderr*" (process-name proc)))))
+         (name (plist-get slots :name))
+         (stderr (get-buffer-create (format "*%s stderr*" name)))
+         (buffer (get-buffer-create (format " *%s output*" name))))
+    (with-current-buffer stderr
+      (buffer-disable-undo)
+      (let ((inhibit-read-only t)) (erase-buffer) (read-only-mode t))
+      (add-hook 'after-change-functions
+                (lambda (beg _end _pre-change-len)
+                  (cl-loop initially (goto-char beg)
+                           do (forward-line) until (eobp)
+                           when (bolp)
+                           for line = (buffer-substring
+                                       (line-beginning-position 0)
+                                       (line-end-position 0))
+                           do (with-current-buffer (jsonrpc-events-buffer conn)
+                                (goto-char (point-max))
+                                (let ((inhibit-read-only t))
+                                  (insert (format "[stderr] %s\n" line))))))
+                nil t))
+    (setq proc (if (functionp proc) (funcall proc) proc))
+    (with-current-buffer stderr
+      (let ((hidden-name (concat " hidden-" (buffer-name))))
+        (ignore-errors (kill-buffer hidden-name))
+        (rename-buffer hidden-name)))
     (setf (jsonrpc--process conn) proc)
     (set-process-buffer proc buffer)
     (process-put proc 'jsonrpc-stderr stderr)
@@ -376,9 +397,7 @@ connection object, called when the process dies .")
     (with-current-buffer (process-buffer proc)
       (buffer-disable-undo)
       (set-marker (process-mark proc) (point-min))
-      (let ((inhibit-read-only t)) (erase-buffer) (read-only-mode t) proc))
-    (with-current-buffer stderr
-      (buffer-disable-undo))
+      (let ((inhibit-read-only t)) (erase-buffer) (read-only-mode t)))
     (process-put proc 'jsonrpc-connection conn)))
 
 (cl-defmethod jsonrpc-connection-send ((connection jsonrpc-process-connection)
