@@ -138,9 +138,6 @@ See `icomplete-delay-completions-threshold'."
   "Maximum number of initial chars to apply `icomplete-compute-delay'."
   :type 'integer)
 
-(defvar icomplete-in-buffer nil
-  "If non-nil, also use Icomplete when completing in non-mini buffers.")
-
 (defcustom icomplete-minibuffer-setup-hook nil
   "Icomplete-specific customization of minibuffer setup.
 
@@ -421,6 +418,54 @@ if that doesn't produce a completion match."
                 read-buffer-completion-ignore-case t
                 read-file-name-completion-ignore-case t)))
 
+(define-minor-mode icomplete-in-region-mode
+  "If non-nil, use `fido-vertical-mode' for `completion-in-region'."
+  :global t :group 'icomplete
+  (remove-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup)
+  (remove-function completion-in-region-function #'icomplete--in-region)
+  (when icomplete-in-region-mode
+    (add-function :override completion-in-region-function #'icomplete--in-region)
+    (add-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup)))
+
+(defun icomplete--in-region (start end collection &optional predicate)
+  (let ((minibuffer-completion-table collection)
+        (minibuffer-completion-predicate predicate)
+        (completion-in-region-mode-map
+         (let ((map (make-sparse-keymap)))
+           (define-key map (kbd "C-n") 'icomplete-forward-completions)
+           (define-key map (kbd "C-p") 'icomplete-backward-completions)
+           map)))
+    (when completion-in-region-mode-predicate
+      (setq completion-in-region--data
+            `(,(if (markerp start) start (copy-marker start))
+              ,(copy-marker end t) ,collection ,predicate))
+      (completion-in-region-mode 1))))
+
+(defun icomplete--in-region-setup ()
+  (cond (;; teardown
+         (or (not completion-in-region-mode) (not icomplete-in-region-mode))
+         (remove-hook 'post-command-hook #'icomplete--in-region-update)
+         (message "exiting!")
+         )
+        (completion-in-region-mode
+         (message "entering!")
+         ;; (icompletein-region-update)
+         (add-hook 'post-command-hook #'icomplete--in-region-update)
+         ;; (message "setting up!")
+         )))
+
+(defun icomplete--in-region-update ()
+  (let* ((icomplete-prospects-height 25)
+         (text
+          (icomplete-completions
+           (icomplete--field-string)
+           (icomplete--completion-table)
+           (icomplete--completion-predicate)
+           nil))
+         (summary (icomplete--matches-summary))
+         (message-log-max nil))
+    (message (concat summary text))))
+
 ;;;###autoload
 (define-minor-mode fido-mode
   "An enhanced `icomplete-mode' that emulates `ido-mode'.
@@ -455,11 +500,8 @@ completions:
 \\{icomplete-minibuffer-map}"
   :global t :group 'icomplete
   (remove-hook 'minibuffer-setup-hook #'icomplete-minibuffer-setup)
-  (remove-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup)
   (when icomplete-mode
     (fido-mode -1)
-    (when icomplete-in-buffer
-      (add-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup))
     (add-hook 'minibuffer-setup-hook #'icomplete-minibuffer-setup)))
 
 (defun icomplete--completion-table ()
@@ -512,34 +554,11 @@ Usually run by inclusion in `minibuffer-setup-hook'."
   (when (and icomplete-mode (icomplete-simple-completing-p))
     (setq-local icomplete--initial-input (icomplete--field-string))
     (setq-local completion-show-inline-help nil)
-    (setq icomplete--scrolled-completions nil)
+    (setq-local icomplete--scrolled-completions nil)
     (use-local-map (make-composed-keymap icomplete-minibuffer-map
     					 (current-local-map)))
     (add-hook 'post-command-hook #'icomplete-post-command-hook nil t)
     (run-hooks 'icomplete-minibuffer-setup-hook)))
-
-(defvar icomplete--in-region-buffer nil)
-
-(defun icomplete--in-region-setup ()
-  (when (or (not completion-in-region-mode)
-	    (and icomplete--in-region-buffer
-		 (not (eq icomplete--in-region-buffer (current-buffer)))))
-    (with-current-buffer (or icomplete--in-region-buffer (current-buffer))
-      (setq icomplete--in-region-buffer nil)
-      (delete-overlay icomplete-overlay)
-      (kill-local-variable 'completion-show-inline-help)
-      (remove-hook 'post-command-hook 'icomplete-post-command-hook t)
-      (message nil)))
-  (when (and completion-in-region-mode
-	     icomplete-mode (icomplete-simple-completing-p))
-    (setq icomplete--in-region-buffer (current-buffer))
-    (setq-local completion-show-inline-help nil)
-    (let ((tem (assq 'completion-in-region-mode
-		     minor-mode-overriding-map-alist)))
-      (unless (memq icomplete-minibuffer-map (cdr tem))
-	(setcdr tem (make-composed-keymap icomplete-minibuffer-map
-					  (cdr tem)))))
-    (add-hook 'post-command-hook 'icomplete-post-command-hook nil t)))
 
 (defun icomplete--sorted-completions ()
   (or completion-all-sorted-completions
@@ -737,15 +756,7 @@ See `icomplete-mode' and `minibuffer-setup-hook'."
               ;; marker's stickiness to figure out whether to place the cursor
               ;; before or after the string, so let's spoon-feed it the pos.
               (put-text-property 0 1 'cursor t text)
-              (overlay-put
-               icomplete-overlay 'before-string
-               (and icomplete-scroll
-                    icomplete-matches-format
-                    (let* ((past (length icomplete--scrolled-past))
-                           (current (1+ past))
-                           (total (+ past (safe-length
-                                           completion-all-sorted-completions))))
-                      (format icomplete-matches-format current total))))
+              (overlay-put icomplete-overlay 'before-string (icomplete--matches-summary))
               (overlay-put icomplete-overlay 'after-string text))))))))
 
 (defun icomplete--augment (md prospects)
@@ -889,6 +900,15 @@ by `group-function''s second \"transformation\" protocol."
     ;; kick out lines at the end.
     (concat " \n"
             (cl-loop for l in lines repeat total-space concat l concat "\n"))))
+
+(defun icomplete--matches-summary ()
+  (and icomplete-scroll
+       icomplete-matches-format
+       (let* ((past (length icomplete--scrolled-past))
+              (current (1+ past))
+              (total (+ past (safe-length
+                              completion-all-sorted-completions))))
+         (format icomplete-matches-format current total))))
 
 ;;;_ > icomplete-completions (name candidates predicate require-match)
 (defun icomplete-completions (name candidates predicate require-match)
