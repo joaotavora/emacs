@@ -419,7 +419,7 @@ if that doesn't produce a completion match."
                 read-file-name-completion-ignore-case t)))
 
 (define-minor-mode icomplete-in-region-mode
-  "If non-nil, use `fido-vertical-mode' for `completion-in-region'."
+  "If non-nil, use Icomplete for `completion-in-region'."
   :global t :group 'icomplete
   (remove-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup)
   (remove-function completion-in-region-function #'icomplete--in-region)
@@ -438,33 +438,67 @@ if that doesn't produce a completion match."
     (when completion-in-region-mode-predicate
       (setq completion-in-region--data
             `(,(if (markerp start) start (copy-marker start))
-              ,(copy-marker end t) ,collection ,predicate))
+              ,(copy-marker end t) ,collection ,predicate
+              ,(current-buffer))
+            completion-all-sorted-completions nil)
       (completion-in-region-mode 1))))
 
+(defvar icomplete--icomplete-vars nil)
+
+(defun icomplete--setup-vars ()
+  (cl-flet ((icompletish
+             (sym) (or (string-match "^\\(icomplete\\|fido\\)" (symbol-name sym))
+                       (member sym '(eldoc-message-function
+                                     completion-styles
+                                     completion-flex-nospace
+                                     completion-category-defaults
+                                     completion-ignore-case
+                                     read-buffer-completion-ignore-case
+                                     read-file-name-completion-ignore-case)))))
+    (setq icomplete--icomplete-vars nil)
+    (let ((source-buffer (current-buffer)))
+      (mapatoms (lambda (sym)
+                  (when (and (boundp sym) (icompletish sym)
+                             (not (eq sym 'icomplete--icomplete-vars)))
+                    (push (cons sym (symbol-value sym)) icomplete--icomplete-vars))))
+      (with-temp-buffer
+        (run-hook-wrapped 'minibuffer-setup-hook
+                          (lambda (fn)
+                            (when (and (symbolp fn) (icompletish fn)) (funcall fn))
+                            nil))
+        (setq eldoc-message-function #'ignore)
+        (cl-loop for (sym . _) in icomplete--icomplete-vars
+                 for v = (symbol-value sym)
+                 do (with-current-buffer source-buffer (set sym v)))))))
+
+(defun icomplete--restore-vars ()
+  (cl-loop for (sym . value) in icomplete--icomplete-vars
+           do (set sym value)))
+
 (defun icomplete--in-region-setup ()
-  (cond (;; teardown
-         (or (not completion-in-region-mode) (not icomplete-in-region-mode))
-         (remove-hook 'post-command-hook #'icomplete--in-region-update)
-         (message "exiting!")
-         )
-        (completion-in-region-mode
-         (message "entering!")
-         ;; (icompletein-region-update)
-         (add-hook 'post-command-hook #'icomplete--in-region-update)
+  (cond ((and completion-in-region-mode icomplete-in-region-mode)
+         (icomplete--setup-vars)
+         ;; (icomplete--in-region-update)
+         (add-hook 'post-command-hook #'icomplete--in-region-update nil t)
          ;; (message "setting up!")
-         )))
+         )
+        (t
+         (icomplete--restore-vars)
+         (remove-hook 'post-command-hook #'icomplete--in-region-update t))))
 
 (defun icomplete--in-region-update ()
-  (let* ((icomplete-prospects-height 25)
-         (text
-          (icomplete-completions
-           (icomplete--field-string)
-           (icomplete--completion-table)
-           (icomplete--completion-predicate)
-           nil))
-         (summary (icomplete--matches-summary))
-         (message-log-max nil))
-    (message (concat summary text))))
+  (condition-case err
+      (let* ((text
+              (icomplete-completions
+               (icomplete--field-string)
+               (icomplete--completion-table)
+               (icomplete--completion-predicate)
+               nil))
+             (summary (icomplete--matches-summary))
+             (message-log-max nil))
+        (message (concat (propertize summary 'face 'minibuffer-prompt) text)))
+    ;; Let the debugger run
+    ((debug error) (signal (car err) (cdr err)))))
 
 ;;;###autoload
 (define-minor-mode fido-mode
@@ -514,9 +548,10 @@ completions:
     (nth 3 completion-in-region--data)))
 (defun icomplete--field-string ()
   (if (window-minibuffer-p) (minibuffer-contents)
-    (buffer-substring-no-properties
-     (nth 0 completion-in-region--data)
-     (nth 1 completion-in-region--data))))
+    (with-current-buffer (nth 4 completion-in-region--data)
+      (buffer-substring-no-properties
+       (nth 0 completion-in-region--data)
+       (nth 1 completion-in-region--data)))))
 (defun icomplete--field-beg ()
   (if (window-minibuffer-p) (minibuffer-prompt-end)
     (nth 0 completion-in-region--data)))
@@ -803,9 +838,10 @@ by `group-function''s second \"transformation\" protocol."
 (cl-defun icomplete--render-vertical
     (comps md &aux scroll-above scroll-below
            (total-space ; number of mini-window lines available
-            (1- (min
-                 icomplete-prospects-height
-                 (truncate (max-mini-window-lines) 1)))))
+            (- (min
+                icomplete-prospects-height
+                (truncate (max-mini-window-lines) 1))
+               1 (if completion-in-region-mode 1 0))))
   ;; Welcome to loopapalooza!
   ;;
   ;; First, be mindful of `icomplete-scroll' and manual scrolls.  If
