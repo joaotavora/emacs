@@ -1480,7 +1480,7 @@ POS can be a buffer position or a button"
   (pop-to-buffer
    (flymake-show-diagnostic (if (button-type pos) (button-start pos) pos))))
 
-(defun flymake--diagnostics-buffer-entries (&optional include-file-names
+(defun flymake--diagnostics-buffer-entries (&optional project-root
                                                       _include-foreign)
   ;; Do nothing if 'flymake--diagnostics-buffer-source' has not yet
   ;; been set to a valid buffer.  This could happen when this function
@@ -1492,17 +1492,22 @@ POS can be a buffer position or a button"
     (with-current-buffer flymake--diagnostics-buffer-source
       (cl-loop for diag in
                (cl-sort (flymake-diagnostics) #'< :key #'flymake-diagnostic-beg)
-               for buffer-or-file = (flymake-diagnostic-buffer diag)
+               for locus = (flymake-diagnostic-buffer diag)
+               for file = (if (bufferp locus)
+                               (buffer-file-name locus)
+                             locus)
+               for overlay = (flymake--diag-overlay diag)
                for (line . col) =
-               (cond ((bufferp buffer-or-file)
-                      (with-current-buffer buffer-or-file
-                        (save-excursion
-                          (goto-char (flymake-diagnostic-beg diag))
-                          (cons (line-number-at-pos)
-                                (- (point)
-                                   (line-beginning-position))))))
-                     ((stringp buffer-or-file)
-                      ))
+               (cond (;; diagnostic is annotated already, use the overlay
+                      overlay (with-current-buffer (overlay-buffer overlay)
+                                (save-excursion
+                                  (goto-char (overlay-start overlay))
+                                  (cons (line-number-at-pos)
+                                        (- (point)
+                                           (line-beginning-position))))) )
+                     (;; diagnostic not annotated, must be a cons
+                      (consp (flymake--diag-beg diag))
+                      (flymake--diag-beg diag)))
                for type = (flymake-diagnostic-type diag)
                for backend = (flymake-diagnostic-backend diag)
                for bname = (or (ignore-errors (symbol-name backend))
@@ -1532,8 +1537,14 @@ POS can be a buffer position or a button"
                            :severity (flymake--lookup-type-property
                                       type
                                       'severity (warning-numeric-level :error)))
-                     (if include-file-names
-                         (vconcat `[,"the file name"] data-vec)
+                     (if project-root
+                         (vconcat `[(,(file-name-nondirectory file)
+                                     help-echo ,(file-relative-name file project-root)
+                                     face nil
+                                     mouse-face highlight
+                                     action flymake-goto-diagnostic
+                                     mouse-action flymake-goto-diagnostic )]
+                                  data-vec)
                        data-vec))))))
 
 (defvar flymake--diagnostics-base-tabulated-list-format
@@ -1606,7 +1617,7 @@ some of its contents in its diagnostic listing.")
   "Flymake diagnostics"
   "A mode for listing Flymake diagnostics."
   (setq tabulated-list-format
-        (vconcat [("File" 13 t)]
+        (vconcat [("File" 25 t)]
                  flymake--diagnostics-base-tabulated-list-format))
   (setq tabulated-list-entries
         'flymake--project-diagnostics-entries)
@@ -1617,13 +1628,15 @@ some of its contents in its diagnostic listing.")
          (visited (project-buffers prj)))
     (cl-loop for buf in visited
              append (let ((flymake--diagnostics-buffer-source buf))
-                      (flymake--diagnostics-buffer-entries t t)))))
+                      (flymake--diagnostics-buffer-entries (project-root prj)
+                                                           t)))))
 
 (defun flymake--project-diagnostics-buffer (root)
-  (get-buffer-create "*Flymake diagnostics for `%s'*" root))
+  (get-buffer-create (format "*Flymake diagnostics for `%s'*" root)))
 
 (defun flymake-show-project-diagnostics ()
   "Show a list of Flymake diagnostics for the current project."
+  (interactive)
   (let* ((root (project-root (project-current)))
          (buffer (flymake--project-diagnostics-buffer root)))
     (with-current-buffer buffer
