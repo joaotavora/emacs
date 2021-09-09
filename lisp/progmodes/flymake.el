@@ -823,8 +823,17 @@ report applies to that region."
     (flymake--publish-diagnostics report-action
                                   :backend backend
                                   :state state
-                                  :region region)))
-  (setf (flymake--state-reported-p state) t))
+                                  :region region)
+    (when flymake-check-start-time
+      (flymake-log :debug "backend %s reported %d diagnostics in %.2f second(s)"
+                   backend
+                   (length report-action)
+                   (float-time
+                    (time-since flymake-check-start-time))))))
+  (setf (flymake--state-reported-p state) t)
+  (flymake--update-diagnostics-listings
+   (current-buffer)
+   (hash-table-keys (flymake--state-foreign-diags state))))
 
 (defun flymake--clear-foreign-diags (state)
   (maphash (lambda (_buffer diags)
@@ -863,8 +872,9 @@ Publish DIAGS "
      (;; Else, if this is the first report, zero all lists and delete
       ;; all associated overlays.
       (not (flymake--state-reported-p state))
-      (dolist (diag (flymake--state-diags state))
-        (delete-overlay (flymake--diag-overlay diag)))
+      (cl-loop for diag in (flymake--state-diags state)
+               for ov = (flymake--diag-overlay diag)
+               when ov do (delete-overlay ov))
       (setf (flymake--state-diags state) nil)
       ;; Also clear all overlays for `foreign-diags' all buffers
       ;; and reset that slot.
@@ -884,19 +894,7 @@ Publish DIAGS "
              if (eq buffer (current-buffer))
              do (push d (flymake--state-diags state))
              else
-             do (push d (gethash buffer (flymake--state-foreign-diags state))))
-
-    (when flymake-check-start-time
-      (flymake-log :debug "backend %s reported %d diagnostics in %.2f second(s)"
-                   backend
-                   (length diags)
-                   (float-time
-                    (time-since flymake-check-start-time))))
-    (when (and (get-buffer (flymake--diagnostics-buffer-name))
-               (get-buffer-window (flymake--diagnostics-buffer-name))
-               (null (cl-set-difference (flymake-running-backends)
-                                        (flymake-reporting-backends))))
-      (flymake-show-diagnostics-buffer))))
+             do (push d (gethash buffer (flymake--state-foreign-diags state))))))
 
 (defun flymake-make-report-fn (backend &optional token)
   "Make a suitable anonymous report function for BACKEND.
@@ -1608,6 +1606,8 @@ report them as \"foreign\" diagnostics instead.
 Commands such as `flymake-show-project-diagnostics' will include
 some of its contents in its diagnostic listing.")
 
+(defvar-local flymake--project-diagnostic-list-project nil)
+
 (defun flymake--clear-list-only-diagnostics (bfn)
   (assoc-delete-all bfn flymake-list-only-diagnostics)
   ;; TODO update the buffers of `flymake-show-project-diagnotics'
@@ -1637,12 +1637,26 @@ some of its contents in its diagnostic listing.")
 (defun flymake-show-project-diagnostics ()
   "Show a list of Flymake diagnostics for the current project."
   (interactive)
-  (let* ((root (project-root (project-current)))
+  (let* ((prj (project-current))
+         (root (project-root prj))
          (buffer (flymake--project-diagnostics-buffer root)))
     (with-current-buffer buffer
       (flymake-project-diagnostics-mode)
+      (setq-local flymake--project-diagnostic-list-project prj)
       (revert-buffer)
       (display-buffer (current-buffer)))))
+
+(defun flymake--update-diagnostics-listings (buffer more-buffers)
+  (dolist (probe (buffer-list))
+    (with-current-buffer probe
+      (when (or (and (eq major-mode 'flymake-project-diagnostics-mode)
+                     flymake--project-diagnostic-list-project
+                     (cl-intersection
+                      (project-buffers flymake--project-diagnostic-list-project)
+                      (cons buffer more-buffers)))
+                (and (eq major-mode 'flymake-diagnostics-buffer-mode)
+                     (eq flymake--diagnostics-buffer-source buffer)))
+        (revert-buffer)))))
 
 (provide 'flymake)
 
