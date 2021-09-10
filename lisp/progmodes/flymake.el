@@ -1593,8 +1593,8 @@ POS can be a buffer position or a button"
                        (current-buffer)))))
     (with-current-buffer target
       (setq flymake--diagnostics-buffer-source source)
-      (revert-buffer)
-      (display-buffer (current-buffer)))))
+      (display-buffer (current-buffer))
+      (revert-buffer))))
 
 
 ;;; Per-project diagnostic listing
@@ -1657,8 +1657,8 @@ some of its contents in its diagnostic listing.")
     (with-current-buffer buffer
       (flymake-project-diagnostics-mode)
       (setq-local flymake--project-diagnostic-list-project prj)
-      (revert-buffer)
-      (display-buffer (current-buffer)))))
+      (display-buffer (current-buffer))
+      (revert-buffer))))
 
 (defun flymake--update-diagnostics-listings (buffer more-buffers)
   (dolist (probe (buffer-list))
