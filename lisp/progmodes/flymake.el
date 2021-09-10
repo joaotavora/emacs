@@ -306,33 +306,38 @@ generated it."
 
 (cl-defstruct (flymake--diag
                (:constructor flymake--diag-make))
-  buffer beg end type text backend data overlay-properties overlay)
+  locus beg end type text backend data overlay-properties overlay)
 
 ;;;###autoload
-(defun flymake-make-diagnostic (buffer
+(defun flymake-make-diagnostic (locus
                                 beg
                                 end
                                 type
                                 text
                                 &optional data
                                 overlay-properties)
-  "Make a Flymake diagnostic for BUFFER's region from BEG to END.
+  "Make a Flymake diagnostic for LOCUS's region from BEG to END.
+LOCUS is a buffer object or a string designating a file name.
+
 TYPE is a diagnostic symbol and TEXT is string describing the
 problem detected in this region.  DATA is any object that the
 caller wishes to attach to the created diagnostic for later
 retrieval with `flymake-diagnostic-data'.
 
-BEG and END may each be either buffer positions (number or
-markers) or a cons (LINE . COL).  When using the second form the
-numbers will be converted to buffer positions (using
-`flymake-diag-region') as soon as the diagnostic is appended to
-an actual buffer.
+If LOCUS is a buffer, BEG and END may each buffer positions
+inside it.  If LOCUS designates a file, they may each be a
+cons (LINE . COL) indicating a file position.  When using the
+second form the numbers will be converted to buffer
+positions (using `flymake-diag-region') if the diagnostic is
+appended to an actual buffer.
 
 OVERLAY-PROPERTIES is an alist of properties attached to the
 created diagnostic, overriding the default properties and any
-properties of `flymake-overlay-control' of the diagnostic's
-type."
-  (flymake--diag-make :buffer buffer :beg beg :end end
+properties listed in the `flymake-overlay-control' property of
+the diagnostic's type symbol."
+  (when (stringp locus)
+    (setq locus (expand-file-name locus)))
+  (flymake--diag-make :locus locus :beg beg :end end
                       :type type :text text :data data
                       :overlay-properties overlay-properties))
 
@@ -359,14 +364,14 @@ diagnostics at BEG."
 
 (defun flymake-diagnostic-buffer (diag)
   "Get Flymake diagnostic DIAG's buffer."
-  (flymake--diag-buffer diag))
+  (flymake--diag-locus diag))
 
 (defun flymake-diagnostic-beg (diag)
   "Get Flymake diagnostic DIAG's start position.
 May only be queried after DIAG has been reported to Flymake."
   (let ((overlay (flymake--diag-overlay diag)))
     (unless overlay
-      (error "DIAG %s not reported to Flymake yet" diag))
+      (error "DIAG %s not drawn on a Flymake buffer" diag))
     (overlay-start overlay)))
 
 (defun flymake-diagnostic-end (diag)
@@ -374,7 +379,7 @@ May only be queried after DIAG has been reported to Flymake."
 May only be queried after DIAG has been reported to Flymake."
   (let ((overlay (flymake--diag-overlay diag)))
     (unless overlay
-      (error "DIAG %s not reported to Flymake yet" diag))
+      (error "DIAG %s not drawn on a Flymake buffer" diag))
     (overlay-end overlay)))
 
 (cl-defun flymake--overlays (&key beg end filter compare key)
@@ -1461,14 +1466,30 @@ TYPE is usually keyword `:error', `:warning' or `:note'."
   (interactive (list (point) t))
   (let* ((id (or (tabulated-list-get-id pos)
                  (user-error "Nothing at point")))
-         (diag (plist-get id :diagnostic)))
-    (with-current-buffer (flymake-diagnostic-buffer diag)
+         (diag (plist-get id :diagnostic))
+         (locus (flymake--diag-locus diag))
+         (beg (flymake--diag-beg diag))
+         (end (flymake--diag-end diag))
+         (visit (lambda (b e)
+                  (goto-char b)
+                  (pulse-momentary-highlight-region (point)
+                                                    (or e (line-end-position))
+                                                    'highlight))))
+    (with-current-buffer (cond ((bufferp locus) locus)
+                               (t (find-file-noselect locus)))
       (with-selected-window
           (display-buffer (current-buffer) other-window)
-        (goto-char (flymake-diagnostic-beg diag))
-        (pulse-momentary-highlight-region (point)
-                                          (flymake-diagnostic-end diag)
-                                          'highlight))
+        (cond (;; an anottated diagnostic (most common case), or a
+               ;; non-annotated buffer diag
+               (number-or-marker-p beg)
+               (funcall visit beg end))
+              (;; a non-annotated file diag (TODO: could use `end'
+               ;; here, too)
+               (pcase-let ((`(,bbeg . ,bend)
+                            (flymake-diag-region (current-buffer)
+                                                 (car beg)
+                                                 (cdr beg))))
+                 (funcall visit bbeg bend)))))
       (current-buffer))))
 
 (defun flymake-goto-diagnostic (pos)
