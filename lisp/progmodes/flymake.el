@@ -1478,8 +1478,67 @@ POS can be a buffer position or a button"
   (pop-to-buffer
    (flymake-show-diagnostic (if (button-type pos) (button-start pos) pos))))
 
+
+(defun flymake--diagnostic-buffer-entries-1 (diags project-root)
+  (cl-loop for diag in diags
+         ;; (cl-sort diags #'< :key #'flymake-diagnostic-beg)
+         for locus = (flymake-diagnostic-buffer diag)
+         for file = (if (bufferp locus)
+                        (buffer-file-name locus)
+                      locus)
+         for overlay = (flymake--diag-overlay diag)
+         for (line . col) =
+         (cond (;; diagnostic is annotated already, use the overlay
+                overlay (with-current-buffer (overlay-buffer overlay)
+                          (save-excursion
+                            (goto-char (overlay-start overlay))
+                            (cons (line-number-at-pos)
+                                  (- (point)
+                                     (line-beginning-position))))) )
+               (;; diagnostic not annotated, must be a cons
+                (consp (flymake--diag-beg diag))
+                (flymake--diag-beg diag)))
+         for type = (flymake-diagnostic-type diag)
+         for backend = (flymake-diagnostic-backend diag)
+         for bname = (or (ignore-errors (symbol-name backend))
+                         "(anonymous function)")
+         for data-vec = `[,(format "%s" line)
+                          ,(format "%s" col)
+                          ,(propertize (format "%s"
+                                               (flymake--lookup-type-property
+                                                type 'flymake-type-name type))
+                                       'face (flymake--lookup-type-property
+                                              type 'mode-line-face 'flymake-error))
+                          ,(propertize
+                            (if bname
+                                (replace-regexp-in-string "\\(.\\)[^-]+\\(-\\|$\\)"
+                                                          "\\1\\2" bname)
+                              "(anon)")
+                            'help-echo (format "From `%s' backend" backend))
+                          (,(format "%s" (flymake-diagnostic-text diag))
+                           mouse-face highlight
+                           help-echo "mouse-2: visit this diagnostic"
+                           face nil
+                           action flymake-goto-diagnostic
+                           mouse-action flymake-goto-diagnostic)]
+         collect
+         (list (list :diagnostic diag
+                     :line line
+                     :severity (flymake--lookup-type-property
+                                type
+                                'severity (warning-numeric-level :error)))
+               (if project-root
+                   (vconcat `[(,(file-name-nondirectory file)
+                               help-echo ,(file-relative-name file project-root)
+                               face nil
+                               mouse-face highlight
+                               action flymake-goto-diagnostic
+                               mouse-action flymake-goto-diagnostic )]
+                            data-vec)
+                 data-vec))))
+
 (defun flymake--diagnostics-buffer-entries (&optional project-root
-                                                      _include-foreign)
+                                                      include-foreign)
   ;; Do nothing if 'flymake--diagnostics-buffer-source' has not yet
   ;; been set to a valid buffer.  This could happen when this function
   ;; is called too early.  For example 'global-display-line-numbers-mode'
@@ -1488,62 +1547,17 @@ POS can be a buffer position or a button"
   ;; set up properly.
   (when (bufferp flymake--diagnostics-buffer-source)
     (with-current-buffer flymake--diagnostics-buffer-source
-      (cl-loop for diag in
-               (cl-sort (flymake-diagnostics) #'< :key #'flymake-diagnostic-beg)
-               for locus = (flymake-diagnostic-buffer diag)
-               for file = (if (bufferp locus)
-                               (buffer-file-name locus)
-                             locus)
-               for overlay = (flymake--diag-overlay diag)
-               for (line . col) =
-               (cond (;; diagnostic is annotated already, use the overlay
-                      overlay (with-current-buffer (overlay-buffer overlay)
-                                (save-excursion
-                                  (goto-char (overlay-start overlay))
-                                  (cons (line-number-at-pos)
-                                        (- (point)
-                                           (line-beginning-position))))) )
-                     (;; diagnostic not annotated, must be a cons
-                      (consp (flymake--diag-beg diag))
-                      (flymake--diag-beg diag)))
-               for type = (flymake-diagnostic-type diag)
-               for backend = (flymake-diagnostic-backend diag)
-               for bname = (or (ignore-errors (symbol-name backend))
-                               "(anonymous function)")
-               for data-vec = `[,(format "%s" line)
-                                ,(format "%s" col)
-                                ,(propertize (format "%s"
-                                                     (flymake--lookup-type-property
-                                                      type 'flymake-type-name type))
-                                             'face (flymake--lookup-type-property
-                                                    type 'mode-line-face 'flymake-error))
-                                ,(propertize
-                                  (if bname
-                                      (replace-regexp-in-string "\\(.\\)[^-]+\\(-\\|$\\)"
-                                                                "\\1\\2" bname)
-                                    "(anon)")
-                                  'help-echo (format "From `%s' backend" backend))
-                                (,(format "%s" (flymake-diagnostic-text diag))
-                                 mouse-face highlight
-                                 help-echo "mouse-2: visit this diagnostic"
-                                 face nil
-                                 action flymake-goto-diagnostic
-                                 mouse-action flymake-goto-diagnostic)]
-               collect
-               (list (list :diagnostic diag
-                           :line line
-                           :severity (flymake--lookup-type-property
-                                      type
-                                      'severity (warning-numeric-level :error)))
-                     (if project-root
-                         (vconcat `[(,(file-name-nondirectory file)
-                                     help-echo ,(file-relative-name file project-root)
-                                     face nil
-                                     mouse-face highlight
-                                     action flymake-goto-diagnostic
-                                     mouse-action flymake-goto-diagnostic )]
-                                  data-vec)
-                       data-vec))))))
+      (when flymake-mode
+        (let (foreign (domestic (flymake-diagnostics)))
+          (when include-foreign
+            (maphash (lambda (_backend state)
+                       (maphash (lambda (_buffer diags)
+                                  (setq foreign (append foreign diags)))
+                                (flymake--state-foreign-diags state)))
+                     flymake--state))
+          (flymake--diagnostic-buffer-entries-1 (append foreign
+                                                        domestic)
+                                                project-root))))))
 
 (defvar flymake--diagnostics-base-tabulated-list-format
   `[("Line" 5 ,(lambda (l1 l2)
