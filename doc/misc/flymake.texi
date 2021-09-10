@@ -552,15 +552,16 @@ reports targeting other parts of the buffer remain valid.
 Before delivering them to Flymake, backends create diagnostic objects
 by calling the function @code{flymake-make-diagnostic}.
 
-@deffn Function flymake-make-diagnostic buffer beg end type text &optional data
-Make a Flymake diagnostic for @var{buffer}'s region from @var{beg} to
-@var{end}.  @var{type} is a diagnostic symbol (@pxref{Flymake error
-types}), and @var{text} is a description of the problem detected in
-this region.  Most commonly @var{buffer} is a buffer object
-(designating the current buffer being syntax-checked), but it may
-designate another buffer or be a string, in which case it names a file
-relative to the current working directory.  @xref{Foreign and
-list-only diagnostics} for when this may be useful.  @var{beg} and
+@deffn Function flymake-make-diagnostic locus beg end type text &optional data
+Make a Flymake diagnostic for the region of text in @var{locus}'s
+delimited by @var{beg} and @var{end}.  @var{type} is a diagnostic
+symbol (@pxref{Flymake error types}), and @var{text} is a description
+of the problem detected in this region.  Most commonly @var{locus} is
+the buffer object designating for the current buffer being
+syntax-checked.  However, it may designate another buffer or be a
+string, in which case it names a file relative to the current working
+directory.  @xref{Foreign and list-only diagnostics} for when this may
+be useful.  Depending on the type of @var{locus}, @var{beg} and
 @var{end} are both either buffer position or conses (@var{line}
 . @var{col}) which specify the line and column of the diagnostic's
 start and end positions, respectively.
