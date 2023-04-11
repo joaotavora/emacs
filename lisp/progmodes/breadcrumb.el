@@ -28,24 +28,24 @@
 
 (defun bc-path (index-alist pos)
   "Get breadcrumb for position POS given INDEX-ALIST."
-  (cl-labels ((containsp (node pos)
-                (let ((reg (get-text-property 0 'breadcrumb-region (car node)))
-                      bare-start)
-                  (cond (reg (<= (car reg) pos (cdr reg)))
-                        ((number-or-marker-p (setq bare-start (cdr node)))
-                         (save-excursion
-                           (goto-char bare-start)
-                           (end-of-defun)
-                           (<= bare-start pos (point)))))))
-              (dfs (node &optional path)
+  (cl-labels ((dfs (node &optional path)
                 (or (and (consp (cdr node))
                          (cl-loop with path = (cons (car node) path)
-                                  for c in (cdr node)
-                                  thereis (dfs c path)))
-                    (and (containsp node pos)
+                                  for child in (cdr node)
+                                  thereis (dfs child path)))
+                    (and (let ((reg (get-text-property 0 'breadcrumb-region
+                                                       (car node))))
+                           (cond (reg (<= (car reg) pos (cdr reg))) (t)))
                          (cons (car node) path)))))
     (nreverse
-     (cl-loop for c in index-alist thereis (dfs c)))))
+     (cond ((get-text-property 0 'breadcrumb-region (caar index-alist))
+            (cl-loop for a in index-alist thereis (dfs a)))
+           (t
+            (cl-loop for (a b) on index-alist
+                     if (consp (cdr a)) collect a into non-terminal
+                     else do
+                     (when (< (cdr a) pos (or (and b (cdr b)) (point-max)))
+                       (cl-return (list (car a))))))))))
 
 (defvar bc--last-update-tick 0)
 
