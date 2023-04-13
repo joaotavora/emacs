@@ -26,26 +26,36 @@
 (require 'cl-lib)
 (require 'imenu)
 
+(defun bc--path-1 (index-alist pos) )
+
+(defvar-local bc--path-2-cache nil)
+(defun bc--path-2 (index-alist pos)
+  (cl-labels ((dfs (n &optional path)
+                (setq path (cons (car n) path))
+                (if (consp (cdr n))
+                    (mapc (lambda (n) (dfs n path)) (cdr n))
+                  (push (cons (cdr n) path) bc--path-2-cache))))
+    (unless bc--path-2-cache
+      (mapc #'dfs index-alist)
+      (setq bc--path-2-cache (cl-sort bc--path-2-cache #'< :key #'car)))
+    (cl-loop with l = bc--path-2-cache
+             with min = 0
+             with max = (length l)
+             for i = (+ min (/ (- max min) 2))
+             for x = (elt l i)
+             if (< pos (car x)) do (setq max i)
+             else do (setq min i)
+             if (= min (1- max)) return (cdr (elt l min)))))
+
+(benchmark-run 1000 (bc--path-2 (imenu--make-index-alist) (point)))
+
+
+
 (defun bc-path (index-alist pos)
   "Get breadcrumb for position POS given INDEX-ALIST."
-  (cl-labels ((dfs (node &optional path)
-                (or (and (consp (cdr node))
-                         (cl-loop with path = (cons (car node) path)
-                                  for child in (cdr node)
-                                  thereis (dfs child path)))
-                    (and (let ((reg (get-text-property 0 'breadcrumb-region
-                                                       (car node))))
-                           (cond (reg (<= (car reg) pos (cdr reg))) (t)))
-                         (cons (car node) path)))))
-    (nreverse
-     (cond ((get-text-property 0 'breadcrumb-region (caar index-alist))
-            (cl-loop for a in index-alist thereis (dfs a)))
-           (t
-            (cl-loop for (a b) on index-alist
-                     if (consp (cdr a)) collect a into non-terminal
-                     else do
-                     (when (< (cdr a) pos (or (and b (cdr b)) (point-max)))
-                       (cl-return (list (car a))))))))))
+  (if (get-text-property 0 'breadcrumb-region (caar index-alist))
+      (bc--path-1 index-alist pos)
+    (bc--path-2 index-alist pos)))
 
 (defvar bc--last-update-tick 0)
 
