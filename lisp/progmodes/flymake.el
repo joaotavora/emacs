@@ -432,17 +432,17 @@ verify FILTER, a function, and sort them by COMPARE (using KEY)."
   :version "26.1")
 
 (defface flymake-error-eol
-  '(t :inherit compilation-error)
+  '((t :inherit compilation-error))
   "Face used for showing errors at end-of-line."
   :package-version '("Flymake" . "1.3.4"))
 
 (defface flymake-warning-eol
-  '(t :inherit compilation-warning)
+  '((t :inherit compilation-warning))
   "Face used for showing warnings at end-of-line."
   :package-version '("Flymake" . "1.3.4"))
 
 (defface flymake-note-eol
-  '(t :inherit compilation-warning)
+  '((t :inherit compilation-warning))
   "Face used for showing notes at end-of-line."
   :package-version '("Flymake" . "1.3.4"))
 
