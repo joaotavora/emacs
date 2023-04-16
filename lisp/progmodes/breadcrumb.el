@@ -26,7 +26,26 @@
 (require 'cl-lib)
 (require 'imenu)
 
-(defun bc--path-1 (index-alist pos) )
+(defvar-local bc--path-1-cache nil)
+(defun bc--path-1 (index-alist pos)
+  (cl-labels ((dfs (n &optional path)
+                (setq path (cons (car n) path))
+                (if (consp (cdr n))
+                    (mapc (lambda (n) (dfs n path)) (cdr n))
+                  (setq bc--path-1-cache
+                        (vconcat bc--path-1-cache
+                                 `[,(cons (cdr n) path)])))))
+    (unless bc--path-1-cache
+      (mapc #'dfs index-alist)
+      (setq bc--path-1-cache (cl-sort bc--path-1-cache #'< :key #'car)))
+    (unless (< pos (car (aref bc--path-1-cache 0)))
+      (cl-loop with l = bc--path-1-cache
+               with min = 0 with max = (length l)
+               for i = (+ min (/ (- max min) 2))
+               for x = (elt l i)
+               if (< pos (car x)) do (setq max i)
+               else do (setq min i)
+               if (= min (1- max)) return (reverse (cdr (elt l min)))))))
 
 (defvar-local bc--path-2-cache nil)
 (defun bc--path-2 (index-alist pos)
@@ -34,21 +53,25 @@
                 (setq path (cons (car n) path))
                 (if (consp (cdr n))
                     (mapc (lambda (n) (dfs n path)) (cdr n))
-                  (push (cons (cdr n) path) bc--path-2-cache))))
+                  (setq bc--path-2-cache
+                        (vconcat bc--path-2-cache
+                                 `[,(cons (cdr n) path)])))))
     (unless bc--path-2-cache
       (mapc #'dfs index-alist)
       (setq bc--path-2-cache (cl-sort bc--path-2-cache #'< :key #'car)))
-    (cl-loop with l = bc--path-2-cache
-             with min = 0
-             with max = (length l)
-             for i = (+ min (/ (- max min) 2))
-             for x = (elt l i)
-             if (< pos (car x)) do (setq max i)
-             else do (setq min i)
-             if (= min (1- max)) return (cdr (elt l min)))))
+    (unless (< pos (car (aref bc--path-2-cache 0)))
+      (cl-loop with l = bc--path-2-cache
+               with min = 0 with max = (length l)
+               for i = (+ min (/ (- max min) 2))
+               for x = (elt l i)
+               if (< pos (car x)) do (setq max i)
+               else do (setq min i)
+               if (= min (1- max)) return (reverse (cdr (elt l min)))))))
 
-(benchmark-run 1000 (bc--path-2 (imenu--make-index-alist) (point)))
-
+;; (defun bc--bench-2 ()
+;;   (progn (setq bc--path-2-cache nil)
+;;          (imenu--make-index-alist)
+;;          (benchmark-run 100000 (bc--path-2 imenu--index-alist (point)))))
 
 
 (defun bc-path (index-alist pos)
