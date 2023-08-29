@@ -511,7 +511,11 @@ It is nil if Eglot is not byte-complied.")
       (WorkspaceSymbol (:name :kind) (:containerName :location :data))
       (InlayHint (:position :label) (:kind :textEdits :tooltip :paddingLeft
                                            :paddingRight :data))
-      (InlayHintLabelPart (:value) (:tooltip :location :command)))
+      (InlayHintLabelPart (:value) (:tooltip :location :command))
+      (CallHierarchyItem (:name :kind) (:tags :detail :uri :range :selectionRange :data))
+      (TypeHierarchyItem (:name :kind) (:tags :detail :uri :range :selectionRange :data))
+      (CallHierarchyIncomingCall (:from :fromRanges) ())
+      (CallHierarchyOutgoingCall (:to :fromRanges) ()))
     "Alist (INTERFACE-NAME . INTERFACE) of known external LSP interfaces.
 
 INTERFACE-NAME is a symbol designated by the spec as
@@ -852,6 +856,7 @@ ACTION is an LSP object of either `CodeAction' or `Command' type."
              :rangeFormatting    `(:dynamicRegistration :json-false)
              :rename             `(:dynamicRegistration :json-false)
              :inlayHint          `(:dynamicRegistration :json-false)
+             :callHierarchy      `(:dynamicRegistration :json-false)
              :publishDiagnostics (list :relatedInformation :json-false
                                        ;; TODO: We can support :codeDescription after
                                        ;; adding an appropriate UI to
@@ -3865,6 +3870,107 @@ If NOERROR, return predicate, else erroring function."
         (t
          (jit-lock-unregister #'eglot--update-hints)
          (remove-overlays nil nil 'eglot--inlay-hint t))))
+
+
+;;; Call hierarchy
+(require 'hierarchy)
+(declare-function widget-button-press "wid-edit.el" (pos &optional ev))
+
+(define-button-type 'eglot-hierarchy-file-button
+  'follow-link t                        ; Click via mouse
+  'face 'default)
+
+;;;###autoload
+(defun eglot-hierarchy-type-hierarchy ()
+  "Show the type hierarchy for the symbol at point."
+  (interactive)
+  (eglot--hierarchy-helper "*EGLOT type hierarchy"
+                           :typeHierarchyProvider
+                           :textDocument/prepareTypeHierarchy
+                           '((:typeHierarchy/supertypes " ↑ ")
+                             (:typeHierarchy/subtypes " ↓ "))))
+
+(defun eglot-hierarchy-call-hierarchy ()
+  "Show the type hierarchy for the symbol at point."
+  (interactive)
+  (eglot--hierarchy-helper "*EGLOT call hierarchy"
+                           :callHierarchyProvider
+                           :textDocument/prepareCallHierarchy
+                           '((:callHierarchy/incomingCalls " ← " :from)
+                             (:callHierarchy/outgoingCalls " → " :to))))
+
+
+(defun eglot--hierarchy-helper (name provider preparer methods)
+  (eglot--server-capable-or-lose provider)
+  (let* ((srv (eglot-current-server))
+         (hierarchy (hierarchy-new))
+         (roots (jsonrpc-request
+                srv
+                preparer
+                (eglot--TextDocumentPositionParams))))
+    (cl-flet ((node-equal (n1 n2)
+                (eglot--dbind ((TypeHierarchyItem) ((:name name1))
+                               ((:detail detail1)) ((:data data1)))
+                    n1
+                  (eglot--dbind ((TypeHierarchyItem) ((:name name2))
+                                 ((:detail detail2)) ((:data data2)))
+                      n2
+                    (cond ((and data1 data2) (equal data1 data2))
+                          ((and detail1 detail2) (equal detail1 detail2))
+                          (t (equal name1 name2))))))
+              (node-origin (n) (get-text-property 0 'eglot--origin
+                                                  (plist-get n :name))))
+      (hierarchy-add-trees
+       hierarchy
+       roots
+       nil
+       (lambda (node)
+         (cl-loop for (m _ key) in methods
+                  for resp = (jsonrpc-request srv m `(:item ,node))
+                  for resp2 = (if key
+                                  (cl-remove-duplicates
+                                   (mapcar (lambda (e) (plist-get e key)) resp)
+                                   :test #'equal)
+                                resp)
+                  for filtered = (cl-remove-if (lambda (n)
+                                                 (cl-find n
+                                                          (node-origin node)
+                                                          :test #'node-equal))
+                                               resp2)
+                  for adjust
+                  = (mapc
+                     (eglot--lambda ((TypeHierarchyItem) name)
+                       (put-text-property 0 1 'eglot--origin (cons node
+                                                                   (node-origin node))
+                                          name)
+                       (put-text-property 0 1 'eglot--lsp-method m name))
+                     filtered)
+                  append (append adjust nil)))
+       nil t)
+      (pop-to-buffer
+       (hierarchy-tree-display
+        hierarchy
+        (lambda (node _)
+          (eglot--dbind ((TypeHierarchyItem) name uri range) node
+            (insert-text-button
+             (concat
+              (propertize
+               (or (cl-second (assoc (get-text-property
+                                      0 'eglot--lsp-method name)
+                                     methods))
+                   " ∘ ")
+               'face 'shadow)
+              name)
+             :type 'eglot-hierarchy-file-button
+             'action
+             (lambda (_btn)
+               (with-current-buffer (find-file-noselect (eglot--uri-to-path uri))
+                 (pop-to-buffer (current-buffer))
+                 (xref--goto-char (eglot--lsp-position-to-point
+                                   (plist-get range :start))))))))
+        (get-buffer-create name))))))
+
+
 
 
 ;;; Hacks
