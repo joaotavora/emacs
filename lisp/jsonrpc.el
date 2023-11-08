@@ -131,6 +131,18 @@ immediately."
   (:method (_s _what)   ;; by default all connections are ready
            t))
 
+;;; API optional
+(cl-defgeneric jsonrpc-convert-from-jsonrpc (connection jsonrpc-message)
+  "Convert JSONRPC-MESSAGE to whatever JSON-esque thing the endpoint accepts.
+Return a plist."
+  (:method (_s jsonrpc-message) `(:jsonrpc "2.0" ,@jsonrpc-message)))
+
+;;; API optional
+(cl-defgeneric jsonrpc-convert-to-jsonrpc (connection remote-message)
+  "Convert JSON-esque REMOTE-MESSAGE to a JSONRPC message.
+Return a plist."
+  (:method (_s remote-message) remote-message))
+
 
 ;;; Convenience
 ;;;
@@ -167,10 +179,10 @@ circumvent that.")
   "Process MESSAGE just received from CONNECTION.
 This function will destructure MESSAGE and call the appropriate
 dispatcher in CONNECTION."
+  (jsonrpc--log-event connection message 'server)
   (cl-destructuring-bind (&key method id error params result _jsonrpc)
-      message
+      (jsonrpc-convert-to-jsonrpc connection message)
     (let (continuations)
-      (jsonrpc--log-event connection message 'server)
       (setf (jsonrpc-last-error connection) error)
       (cond
        (;; A remote request
@@ -446,7 +458,7 @@ connection object, called when the process dies.")
                      ((symbolp method) (symbol-name method))
                      ((stringp method) method)
                      (t (error "[jsonrpc] invalid method %s" method)))))
-  (let* ( (message `(:jsonrpc "2.0" ,@args))
+  (let* ( (message (jsonrpc-convert-from-jsonrpc connection args))
           (json (jsonrpc--json-encode message))
           (headers
            `(("Content-Length" . ,(format "%d" (string-bytes json)))
