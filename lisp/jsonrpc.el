@@ -400,16 +400,20 @@ ignored."
     :accessor jsonrpc--on-shutdown
     :initform #'ignore
     :initarg :on-shutdown
-    :documentation "Function run when the process dies."))
+    :documentation "Function run when the process dies.")
+   (-autoport-inferior
+    :initform nil
+    :documentation "Used by `jsonrpc-autoport-bootstrap'."))
   :documentation "A JSONRPC connection over an Emacs process.
 The following initargs are accepted:
 
 :PROCESS (mandatory), a live running Emacs process object or a
-function of no arguments producing one such object.  The process
-represents either a pipe connection to locally running process or
-a stream connection to a network host.  The remote endpoint is
-expected to understand JSONRPC messages with basic HTTP-style
-enveloping headers such as \"Content-Length:\".
+function producing one such object.  If a function, it is passed
+the `jsonrpc-process-connection' object.  The process represents
+either a pipe connection to locally running process or a stream
+connection to a network host.  The remote endpoint is expected to
+understand JSONRPC messages with basic HTTP-style enveloping
+headers such as \"Content-Length:\".
 
 :ON-SHUTDOWN (optional), a function of one argument, the
 connection object, called when the process dies.")
@@ -449,7 +453,10 @@ connection object, called when the process dies.")
           ;; now created should pick up the current stderr buffer,
           ;; which we immediately rename
           (setq proc (if (functionp proc)
-                         (with-current-buffer calling-buffer (funcall proc))
+                         (with-current-buffer calling-buffer
+                           (if (zerop (cdr (func-arity proc)))
+                               (funcall proc)
+                             (funcall proc conn)))
                        proc))
           (ignore-errors (kill-buffer hidden-name))
           (rename-buffer hidden-name)
@@ -601,6 +608,7 @@ With optional CLEANUP, kill any associated buffers."
                    (jsonrpc--request-continuations connection))
         (jsonrpc--message "Server exited with status %s" (process-exit-status proc))
         (delete-process proc)
+        (when-let (p (slot-value '-autoport-inferior proc)) (delete-process p))
         (funcall (jsonrpc--on-shutdown connection) connection)))))
 
 (cl-defun jsonrpc--process-filter (proc string)
@@ -810,6 +818,70 @@ SUBTYPE tells more about the event."
                                                   (forward-sexp 1)
                                                   (forward-line 2)
                                                   (point)))))))))))))
+
+
+;;;; More convenience utils
+(defun jsonrpc-autoport-bootstrap (name contact &optional connect-args)
+  "Use CONTACT to start network server, then connect to it.
+
+CONTACT is a list where all the elements are strings except for
+one, which is the keyword `:autoport'.
+
+Return function suitable for the :PROCESS initarg of
+`jsonrpc-process-connection' (which see).
+
+When called the function will invoke a process based on CONTACT
+where `:autoport' with is replaced a locally free network port.
+Thereafter, a network is made to this port.
+
+The internal processes and control buffers are named after NAME.
+CONNECT-ARGS are passed as additional arguments to
+`open-network-stream'."
+  (lambda (conn)
+    (let* ((port-probe (make-network-process :name "jsonrpc-port-probe-dummy"
+                                             :server t
+                                             :host "localhost"
+                                             :service 0))
+           (port-number (unwind-protect
+                            (process-contact port-probe :service)
+                          (delete-process port-probe)))
+           inferior np)
+      (unwind-protect
+          (progn
+            (setq inferior
+                  (make-process
+                   :name (format "autostart-inferior-%s" name)
+                   :stderr (format "*%s stderr*" name)
+                   :noquery t
+                   :command (cl-subst
+                             (format "%s" port-number) :autoport contact)))
+            (setq np
+                  (cl-loop
+                   repeat 10 for i from 1
+                   do (accept-process-output nil 0.5)
+                   while (process-live-p inferior)
+                   do (message
+                       "[jsonrpc-autoport] Trying to connect to localhost and port %s (attempt %s)"
+                       port-number i)
+                   thereis (ignore-errors
+                             (apply #'open-network-stream
+                                    (format "autoconnect-%s" name)
+                                    nil
+                                    "localhost" port-number connect-args))))
+            (setf (slot-value conn '-autoport-inferior) inferior)
+            np)
+        (cond ((and (process-live-p np)
+                    (process-live-p inferior))
+               (message "[jsonrpc-autoport] Done, connected to %s!" port-number))
+              (t
+               (when inferior (delete-process inferior))
+               (when np (delete-process np))
+               (error "[jsonrpc-autoport] Could not start and connect to server%s"
+                      (if inferior
+                          (format " started with %s"
+                                  (process-command inferior))
+                        "!"))))))))
+
 
 (provide 'jsonrpc)
 ;;; jsonrpc.el ends here
