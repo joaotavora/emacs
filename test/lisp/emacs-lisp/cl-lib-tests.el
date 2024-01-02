@@ -465,8 +465,6 @@
   (should (equal (cl-pairlis '(a b c) '(1 2 3) '((d . 4) (e . 5))) '((a . 1) (b . 2) (c . 3) (d . 4) (e . 5))))
   (should (equal (cl-pairlis '() '(1 2 3)) '()))
   (should (equal (cl-pairlis '(a b c) '()) '()))
-
-  ;; Test with nil in keys or values
   (should (equal (cl-pairlis '(a nil c) '(1 2 3)) '((a . 1) (nil . 2) (c . 3))))
   (should (equal (cl-pairlis '(a b c) '(1 nil 3)) '((a . 1) (b) (c . 3)))))
 
