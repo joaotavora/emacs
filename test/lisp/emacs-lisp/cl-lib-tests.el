@@ -271,7 +271,7 @@
   (let ((not-a-list :a))
     (should-error (cl-values-list not-a-list) :type 'wrong-type-argument)))
 
-(ert-deftest test-cl-multiple-value-list ()
+(ert-deftest cl-lib-multiple-value-list ()
   (should (equal (cl-multiple-value-list 1) 1))
   (should (equal (cl-multiple-value-list '(1 2 3)) '(1 2 3)))
   (should (equal (cl-multiple-value-list "string") "string"))
