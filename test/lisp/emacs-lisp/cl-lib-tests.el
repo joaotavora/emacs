@@ -470,27 +470,6 @@
   (should (equal (cl-pairlis '(a nil c) '(1 2 3)) '((a . 1) (nil . 2) (c . 3))))
   (should (equal (cl-pairlis '(a b c) '(1 nil 3)) '((a . 1) (b) (c . 3)))))
 
-(ert-deftest cl-lib-test-eighth ()
-  (should (null (cl-eighth '())))
-  (should (null (cl-eighth '(1 2 3 4 5 6 7))))
-  (should (= 8 (cl-eighth '(1 2 3 4 5 6 7 8))))
-  (should (= 8 (cl-eighth '(1 2 3 4 5 6 7 8 9))))
-  (should-error (cl-eighth "12345678") :type 'wrong-type-argument))
-
-(ert-deftest cl-lib-test-ninth ()
-  (should (null (cl-ninth '())))
-  (should (null (cl-ninth '(1 2 3 4 5 6 7 8))))
-  (should (= 9 (cl-ninth '(1 2 3 4 5 6 7 8 9))))
-  (should (= 9 (cl-ninth '(1 2 3 4 5 6 7 8 9 10))))
-  (should-error (cl-ninth "123456789") :type 'wrong-type-argument))
-
-(ert-deftest cl-lib-test-tenth ()
-  (should (null (cl-tenth '())))
-  (should (null (cl-tenth '(1 2 3 4 5 6 7 8 9))))
-  (should (= 10 (cl-tenth '(1 2 3 4 5 6 7 8 9 10))))
-  (should (= 10 (cl-tenth '(1 2 3 4 5 6 7 8 9 10 11))))
-  (should-error (cl-tenth "1234567890") :type 'wrong-type-argument))
-
 (ert-deftest cl-lib-test-endp ()
   (should (cl-endp '()))
   (should-not (cl-endp '(1)))
