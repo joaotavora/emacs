@@ -153,23 +153,23 @@ to an element already in the list stored in PLACE.
                  ;; earlier and should have triggered them already.
                  (with-no-warnings ,place)
                (setq ,place (cons ,var ,place))))
-	`(setq ,place (cl-adjoin ,x ,place ,@keys)))
+        `(setq ,place (cl-adjoin ,x ,place ,@keys)))
     `(cl-callf2 cl-adjoin ,x ,place ,@keys)))
 
 (defun cl--set-buffer-substring (start end val)
   "Delete region from START to END and insert VAL."
   (save-excursion (delete-region start end)
-		  (goto-char start)
-		  (insert val)
-		  val))
+                  (goto-char start)
+                  (insert val)
+                  val))
 
 (defun cl--set-substring (str start end val)
   (if end (if (< end 0) (cl-incf end (length str)))
     (setq end (length str)))
   (if (< start 0) (cl-incf start (length str)))
   (concat (and (> start 0) (substring str 0 start))
-	  val
-	  (and (< end (length str)) (substring str end))))
+          val
+          (and (< end (length str)) (substring str end))))
 
 (gv-define-expander substring
   (lambda (do place from &optional to)
@@ -365,11 +365,11 @@ SEQ, this is like `mapcar'.  With several, it is like the Common Lisp
 \n(fn FUNCTION SEQ...)"
   (if cl-rest
       (if (or (cdr cl-rest) (nlistp cl-x) (nlistp (car cl-rest)))
-	  (cl--mapcar-many cl-func (cons cl-x cl-rest) 'accumulate)
-	(let ((cl-res nil) (cl-y (car cl-rest)))
-	  (while (and cl-x cl-y)
-	    (push (funcall cl-func (pop cl-x) (pop cl-y)) cl-res))
-	  (nreverse cl-res)))
+          (cl--mapcar-many cl-func (cons cl-x cl-rest) 'accumulate)
+        (let ((cl-res nil) (cl-y (car cl-rest)))
+          (while (and cl-x cl-y)
+            (push (funcall cl-func (pop cl-x) (pop cl-y)) cl-res))
+          (nreverse cl-res)))
     (mapcar cl-func cl-x)))
 
 (cl--defalias 'cl-svref 'aref)
@@ -456,12 +456,12 @@ Thus, `(cl-list* A B C D)' is equivalent to `(nconc (list A B C) D)', or to
 \n(fn ARG...)"
   (declare (compiler-macro cl--compiler-macro-list*))
   (cond ((not rest) arg)
-	((not (cdr rest)) (cons arg (car rest)))
-	(t (let* ((n (length rest))
-		  (copy (copy-sequence rest))
-		  (last (nthcdr (- n 2) copy)))
-	     (setcdr last (car (cdr last)))
-	     (cons arg copy)))))
+        ((not (cdr rest)) (cons arg (car rest)))
+        (t (let* ((n (length rest))
+                  (copy (copy-sequence rest))
+                  (last (nthcdr (- n 2) copy)))
+             (setcdr last (car (cdr last)))
+             (cons arg copy)))))
 
 (defun cl-ldiff (list sublist)
   "Return a copy of LIST with the tail SUBLIST removed."
@@ -476,8 +476,8 @@ The elements of LIST are not copied, just the list structure itself."
   (declare (side-effect-free error-free))
   (if (consp list)
       (let ((res nil))
-	(while (consp list) (push (pop list) res))
-	(prog1 (nreverse res) (setcdr res list)))
+        (while (consp list) (push (pop list) res))
+        (prog1 (nreverse res) (setcdr res list)))
     (car list)))
 
 ;; Autoloaded, but we have not loaded cl-loaddefs yet.
@@ -494,11 +494,11 @@ Otherwise, return LIST unmodified.
 \n(fn ITEM LIST [KEYWORD VALUE]...)"
   (declare (compiler-macro cl--compiler-macro-adjoin))
   (cond ((or (equal cl-keys '(:test eq))
-	     (and (null cl-keys) (not (numberp cl-item))))
-	 (if (memq cl-item cl-list) cl-list (cons cl-item cl-list)))
-	((or (equal cl-keys '(:test equal)) (null cl-keys))
-	 (if (member cl-item cl-list) cl-list (cons cl-item cl-list)))
-	(t (apply 'cl--adjoin cl-item cl-list cl-keys))))
+             (and (null cl-keys) (not (numberp cl-item))))
+         (if (memq cl-item cl-list) cl-list (cons cl-item cl-list)))
+        ((or (equal cl-keys '(:test equal)) (null cl-keys))
+         (if (member cl-item cl-list) cl-list (cons cl-item cl-list)))
+        (t (apply 'cl--adjoin cl-item cl-list cl-keys))))
 
 (defun cl-subst (cl-new cl-old cl-tree &rest cl-keys)
   "Substitute NEW for OLD everywhere in TREE (non-destructively).
@@ -511,12 +511,12 @@ Return a copy of TREE with all elements `eql' to OLD replaced by NEW.
 
 (defun cl--do-subst (cl-new cl-old cl-tree)
   (cond ((eq cl-tree cl-old) cl-new)
-	((consp cl-tree)
-	 (let ((a (cl--do-subst cl-new cl-old (car cl-tree)))
-	       (d (cl--do-subst cl-new cl-old (cdr cl-tree))))
-	   (if (and (eq a (car cl-tree)) (eq d (cdr cl-tree)))
-	       cl-tree (cons a d))))
-	(t cl-tree)))
+        ((consp cl-tree)
+         (let ((a (cl--do-subst cl-new cl-old (car cl-tree)))
+               (d (cl--do-subst cl-new cl-old (cdr cl-tree))))
+           (if (and (eq a (car cl-tree)) (eq d (cdr cl-tree)))
+               cl-tree (cons a d))))
+        (t cl-tree)))
 
 (defun cl-acons (key value alist)
   "Add KEY and VALUE to ALIST.
