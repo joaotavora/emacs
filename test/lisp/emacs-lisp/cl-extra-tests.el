@@ -30,10 +30,27 @@
   (should (eq (cl-get 'cl-get-test 'z :none) :none)))
 
 (ert-deftest cl-extra-test-coerce ()
+  ;; convert to list
   (should (equal (cl-coerce "abc" 'list) '(?a ?b ?c)))
-  (should (equal (cl-coerce "abc" 'vector) [97 98 99]))
   (should (equal (cl-coerce ["a" "b" "c"] 'list) '("a" "b" "c")))
-  (should (equal (cl-coerce '("a" "b" "c") 'vector) ["a" "b" "c"])))
+  ;; convert to vector
+  (should (equal (cl-coerce "abc" 'vector) [97 98 99]))
+  (should (equal (cl-coerce '("a" "b" "c") 'vector) ["a" "b" "c"]))
+  ;; convert to bool-vector
+  (should (equal (cl-coerce '(3 4) 'bool-vector) #&2""))
+  (should (equal (cl-coerce "abc" 'bool-vector) #&3""))
+  ;; convert to string
+  (should (equal (cl-coerce [1] 'string) (char-to-string 1)))
+  (should (equal (cl-coerce '(1) 'string) (char-to-string 1)))
+  ;; convert to array
+  (should (equal (cl-coerce '(1 2 3) 'array) [1 2 3]))
+  (should (equal (cl-coerce "abc" 'array) "abc"))
+  ;; convert to character
+  (should-error (cl-coerce (list 1 2 3) 'character))
+  (should-error (cl-coerce [1 2 3] 'character))
+  (should-error (cl-coerce "abc" 'character))
+  (should (equal (cl-coerce "a" 'character) 97))
+  (should (equal (cl-coerce 'a 'character) 97)))
 
 (ert-deftest cl-extra-test-equalp ()
   (should (cl-equalp "Test" "test"))
