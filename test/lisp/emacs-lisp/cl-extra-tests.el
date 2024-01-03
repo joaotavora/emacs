@@ -22,6 +22,13 @@
 (require 'cl-lib)
 (require 'ert)
 
+(ert-deftest cl-get ()
+  (put 'cl-get-test 'x 1)
+  (put 'cl-get-test 'y nil)
+  (should (eq (cl-get 'cl-get-test 'x) 1))
+  (should (eq (cl-get 'cl-get-test 'y :none) nil))
+  (should (eq (cl-get 'cl-get-test 'z :none) :none)))
+
 (ert-deftest cl-extra-test-coerce ()
   (should (equal (cl-coerce "abc" 'list) '(?a ?b ?c)))
   (should (equal (cl-coerce "abc" 'vector) [97 98 99]))
@@ -278,12 +285,6 @@
     (should (cl-tailp (nthcdr 2 l) l))
     (should (cl-tailp l l))
     (should (not (cl-tailp '(4 5) l)))))
-
-(ert-deftest cl-extra-test-get ()
-  (let ((sym (make-symbol "test")))
-    (should (equal (cl-get sym 'foo 'default) 'default))
-    (put sym 'foo 'bar)
-    (should (equal (cl-get sym 'foo 'default) 'bar))))
 
 (ert-deftest cl-extra-test-remprop ()
   (let ((sym (make-symbol "test")))
