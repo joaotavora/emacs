@@ -48,17 +48,17 @@
 TYPE is a Common Lisp type specifier.
 \n(fn OBJECT TYPE)"
   (cond ((eq type 'list) (if (listp x) x (append x nil)))
-	((eq type 'vector) (if (vectorp x) x (vconcat x)))
-	((eq type 'bool-vector)
+        ((eq type 'vector) (if (vectorp x) x (vconcat x)))
+        ((eq type 'bool-vector)
          (if (bool-vector-p x) x (apply #'bool-vector (cl-coerce x 'list))))
-	((eq type 'string) (if (stringp x) x (concat x)))
-	((eq type 'array) (if (arrayp x) x (vconcat x)))
-	((and (eq type 'character) (stringp x) (= (length x) 1)) (aref x 0))
-	((and (eq type 'character) (symbolp x))
+        ((eq type 'string) (if (stringp x) x (concat x)))
+        ((eq type 'array) (if (arrayp x) x (vconcat x)))
+        ((and (eq type 'character) (stringp x) (= (length x) 1)) (aref x 0))
+        ((and (eq type 'character) (symbolp x))
          (cl-coerce (symbol-name x) type))
-	((eq type 'float) (float x))
-	((cl-typep x type) x)
-	(t (error "Can't coerce %s to type %s" x type))))
+        ((eq type 'float) (float x))
+        ((cl-typep x type) x)
+        (t (error "Can't coerce %s to type %s" x type))))
 
 
 ;;; Predicates.
@@ -70,21 +70,21 @@ This is like `equal', except that it accepts numerically equal
 numbers of different types (float vs. integer), and also compares
 strings case-insensitively."
   (cond ((eq x y) t)
-	((stringp x)
-	 (and (stringp y) (string-equal-ignore-case x y)))
-	((numberp x)
-	 (and (numberp y) (= x y)))
-	((consp x)
-	 (while (and (consp x) (consp y) (cl-equalp (car x) (car y)))
-	   (setq x (cdr x) y (cdr y)))
-	 (and (not (consp x)) (cl-equalp x y)))
-	((vectorp x)
-	 (and (vectorp y) (= (length x) (length y))
-	      (let ((i (length x)))
-		(while (and (>= (setq i (1- i)) 0)
-			    (cl-equalp (aref x i) (aref y i))))
-		(< i 0))))
-	(t (equal x y))))
+        ((stringp x)
+         (and (stringp y) (string-equal-ignore-case x y)))
+        ((numberp x)
+         (and (numberp y) (= x y)))
+        ((consp x)
+         (while (and (consp x) (consp y) (cl-equalp (car x) (car y)))
+           (setq x (cdr x) y (cdr y)))
+         (and (not (consp x)) (cl-equalp x y)))
+        ((vectorp x)
+         (and (vectorp y) (= (length x) (length y))
+              (let ((i (length x)))
+                (while (and (>= (setq i (1- i)) 0)
+                            (cl-equalp (aref x i) (aref y i))))
+                (< i 0))))
+        (t (equal x y))))
 
 
 ;;; Control structures.
@@ -93,37 +93,37 @@ strings case-insensitively."
 (defun cl--mapcar-many (cl-func cl-seqs &optional acc)
   (if (cdr (cdr cl-seqs))
       (let* ((cl-res nil)
-	     (cl-n (apply #'min (mapcar #'length cl-seqs)))
-	     (cl-i 0)
-	     (cl-args (copy-sequence cl-seqs))
-	     cl-p1 cl-p2)
-	(setq cl-seqs (copy-sequence cl-seqs))
-	(while (< cl-i cl-n)
-	  (setq cl-p1 cl-seqs cl-p2 cl-args)
-	  (while cl-p1
-	    (setcar cl-p2
-		    (if (consp (car cl-p1))
-			(prog1 (car (car cl-p1))
-			  (setcar cl-p1 (cdr (car cl-p1))))
-		      (aref (car cl-p1) cl-i)))
-	    (setq cl-p1 (cdr cl-p1) cl-p2 (cdr cl-p2)))
-	  (if acc
-	      (push (apply cl-func cl-args) cl-res)
-	    (apply cl-func cl-args))
-	  (setq cl-i (1+ cl-i)))
-	(and acc (nreverse cl-res)))
+             (cl-n (apply #'min (mapcar #'length cl-seqs)))
+             (cl-i 0)
+             (cl-args (copy-sequence cl-seqs))
+             cl-p1 cl-p2)
+        (setq cl-seqs (copy-sequence cl-seqs))
+        (while (< cl-i cl-n)
+          (setq cl-p1 cl-seqs cl-p2 cl-args)
+          (while cl-p1
+            (setcar cl-p2
+                    (if (consp (car cl-p1))
+                        (prog1 (car (car cl-p1))
+                          (setcar cl-p1 (cdr (car cl-p1))))
+                      (aref (car cl-p1) cl-i)))
+            (setq cl-p1 (cdr cl-p1) cl-p2 (cdr cl-p2)))
+          (if acc
+              (push (apply cl-func cl-args) cl-res)
+            (apply cl-func cl-args))
+          (setq cl-i (1+ cl-i)))
+        (and acc (nreverse cl-res)))
     (let ((cl-res nil)
-	  (cl-x (car cl-seqs))
-	  (cl-y (nth 1 cl-seqs)))
+          (cl-x (car cl-seqs))
+          (cl-y (nth 1 cl-seqs)))
       (let ((cl-n (min (length cl-x) (length cl-y)))
-	    (cl-i -1))
-	(while (< (setq cl-i (1+ cl-i)) cl-n)
-	  (let ((val (funcall cl-func
-			      (if (consp cl-x) (pop cl-x) (aref cl-x cl-i))
-			      (if (consp cl-y) (pop cl-y) (aref cl-y cl-i)))))
-	    (when acc
-	      (push val cl-res)))))
-	(and acc (nreverse cl-res)))))
+            (cl-i -1))
+        (while (< (setq cl-i (1+ cl-i)) cl-n)
+          (let ((val (funcall cl-func
+                              (if (consp cl-x) (pop cl-x) (aref cl-x cl-i))
+                              (if (consp cl-y) (pop cl-y) (aref cl-y cl-i)))))
+            (when acc
+              (push val cl-res)))))
+        (and acc (nreverse cl-res)))))
 
 ;;;###autoload
 (defun cl-map (cl-type cl-func cl-seq &rest cl-rest)
@@ -141,17 +141,17 @@ the elements themselves.
 \n(fn FUNCTION LIST...)"
   (if cl-rest
       (let ((cl-res nil)
-	    (cl-args (cons cl-list (copy-sequence cl-rest)))
-	    cl-p)
-	(while (not (memq nil cl-args))
-	  (push (apply cl-func cl-args) cl-res)
-	  (setq cl-p cl-args)
-	  (while cl-p (setcar cl-p (cdr (pop cl-p)))))
-	(nreverse cl-res))
+            (cl-args (cons cl-list (copy-sequence cl-rest)))
+            cl-p)
+        (while (not (memq nil cl-args))
+          (push (apply cl-func cl-args) cl-res)
+          (setq cl-p cl-args)
+          (while cl-p (setcar cl-p (cdr (pop cl-p)))))
+        (nreverse cl-res))
     (let ((cl-res nil))
       (while cl-list
-	(push (funcall cl-func cl-list) cl-res)
-	(setq cl-list (cdr cl-list)))
+        (push (funcall cl-func cl-list) cl-res)
+        (setq cl-list (cdr cl-list)))
       (nreverse cl-res))))
 
 ;;;###autoload
@@ -175,11 +175,11 @@ the elements themselves.
 \n(fn FUNCTION LIST...)"
   (if cl-rest
       (let ((cl-args (cons cl-list (copy-sequence cl-rest)))
-	    cl-p)
-	(while (not (memq nil cl-args))
+            cl-p)
+        (while (not (memq nil cl-args))
           (apply cl-func cl-args)
-	  (setq cl-p cl-args)
-	  (while cl-p (setcar cl-p (cdr (pop cl-p))))))
+          (setq cl-p cl-args)
+          (while cl-p (setcar cl-p (cdr (pop cl-p))))))
     (let ((cl-p cl-list))
       (while cl-p (funcall cl-func cl-p) (setq cl-p (cdr cl-p)))))
   cl-list)
@@ -215,7 +215,7 @@ value of PREDICATE, or nil if PREDICATE never returned non-nil.
 
 Examples:
 
-  (cl-some #\\='identity (list nil nil \"foo\")) ; returns t
+  (cl-some #\\='identity (list nil nil \"foo\")) ; returns \"foo\"
 
   (cl-some #\\='identity [nil nil nil]) ; returns nil
 
@@ -319,28 +319,28 @@ Examples:
   (or cl-what (setq cl-what (current-buffer)))
   (if (bufferp cl-what)
       (let (cl-mark cl-mark2 (cl-next t) cl-next2)
-	(with-current-buffer cl-what
-	  (setq cl-mark (copy-marker (or cl-start (point-min))))
-	  (setq cl-mark2 (and cl-end (copy-marker cl-end))))
-	(while (and cl-next (or (not cl-mark2) (< cl-mark cl-mark2)))
-	  (setq cl-next (if cl-prop (next-single-property-change
-				     cl-mark cl-prop cl-what)
-			  (next-property-change cl-mark cl-what))
-		cl-next2 (or cl-next (with-current-buffer cl-what
-				       (point-max))))
-	  (funcall cl-func (prog1 (marker-position cl-mark)
-			     (set-marker cl-mark cl-next2))
-		   (if cl-mark2 (min cl-next2 cl-mark2) cl-next2)))
-	(set-marker cl-mark nil) (if cl-mark2 (set-marker cl-mark2 nil)))
+        (with-current-buffer cl-what
+          (setq cl-mark (copy-marker (or cl-start (point-min))))
+          (setq cl-mark2 (and cl-end (copy-marker cl-end))))
+        (while (and cl-next (or (not cl-mark2) (< cl-mark cl-mark2)))
+          (setq cl-next (if cl-prop (next-single-property-change
+                                     cl-mark cl-prop cl-what)
+                          (next-property-change cl-mark cl-what))
+                cl-next2 (or cl-next (with-current-buffer cl-what
+                                       (point-max))))
+          (funcall cl-func (prog1 (marker-position cl-mark)
+                             (set-marker cl-mark cl-next2))
+                   (if cl-mark2 (min cl-next2 cl-mark2) cl-next2)))
+        (set-marker cl-mark nil) (if cl-mark2 (set-marker cl-mark2 nil)))
     (or cl-start (setq cl-start 0))
     (or cl-end (setq cl-end (length cl-what)))
     (while (< cl-start cl-end)
       (let ((cl-next (or (if cl-prop (next-single-property-change
-				      cl-start cl-prop cl-what)
-			   (next-property-change cl-start cl-what))
-			 cl-end)))
-	(funcall cl-func cl-start (min cl-next cl-end))
-	(setq cl-start cl-next)))))
+                                      cl-start cl-prop cl-what)
+                           (next-property-change cl-start cl-what))
+                         cl-end)))
+        (funcall cl-func cl-start (min cl-next cl-end))
+        (setq cl-start cl-next)))))
 
 ;;;###autoload
 (defun cl--map-overlays (cl-func &optional cl-buffer cl-start cl-end cl-arg)
@@ -352,10 +352,10 @@ Examples:
       (if cl-end (setq cl-end (copy-marker cl-end))))
     (setq cl-ovl (nconc (car cl-ovl) (cdr cl-ovl)))
     (while (and cl-ovl
-		(or (not (overlay-start (car cl-ovl)))
-		    (and cl-end (>= (overlay-start (car cl-ovl)) cl-end))
-		    (and cl-start (<= (overlay-end (car cl-ovl)) cl-start))
-		    (not (funcall cl-func (car cl-ovl) cl-arg))))
+                (or (not (overlay-start (car cl-ovl)))
+                    (and cl-end (>= (overlay-start (car cl-ovl)) cl-end))
+                    (and cl-start (<= (overlay-end (car cl-ovl)) cl-start))
+                    (not (funcall cl-func (car cl-ovl) cl-arg))))
       (setq cl-ovl (cdr cl-ovl)))
     (if cl-start (set-marker cl-start nil))
     (if cl-end (set-marker cl-end nil))))
@@ -364,8 +364,8 @@ Examples:
 ;;;###autoload
 (defun cl--set-frame-visible-p (frame val)
   (cond ((null val) (make-frame-invisible frame))
-	((eq val 'icon) (iconify-frame frame))
-	(t (make-frame-visible frame)))
+        ((eq val 'icon) (iconify-frame frame))
+        (t (make-frame-visible frame)))
   val)
 
 
@@ -395,10 +395,10 @@ Examples:
   "Return the integer square root of the (integer) argument X."
   (if (and (integerp x) (> x 0))
       (let ((g (ash 2 (/ (logb x) 2)))
-	    g2)
-	(while (< (setq g2 (/ (+ g (/ x g)) 2)) g)
-	  (setq g g2))
-	g)
+            g2)
+        (while (< (setq g2 (/ (+ g (/ x g)) 2)) g)
+          (setq g g2))
+        g)
     (if (eq x 0) 0 (signal 'arith-error nil))))
 
 ;;;###autoload
@@ -429,18 +429,18 @@ With two arguments, return truncation and remainder of their quotient."
 With two arguments, return rounding and remainder of their quotient."
   (if y
       (if (and (integerp x) (integerp y))
-	  (let* ((hy (/ y 2))
-		 (res (cl-floor (+ x hy) y)))
-	    (if (and (= (car (cdr res)) 0)
-		     (= (+ hy hy) y)
-		     (/= (% (car res) 2) 0))
-		(list (1- (car res)) hy)
-	      (list (car res) (- (car (cdr res)) hy))))
-	(let ((q (round (/ x y))))
-	  (list q (- x (* q y)))))
+          (let* ((hy (/ y 2))
+                 (res (cl-floor (+ x hy) y)))
+            (if (and (= (car (cdr res)) 0)
+                     (= (+ hy hy) y)
+                     (/= (% (car res) 2) 0))
+                (list (1- (car res)) hy)
+              (list (car res) (- (car (cdr res)) hy))))
+        (let ((q (round (/ x y))))
+          (list q (- x (* q y)))))
     (if (integerp x) (list x 0)
       (let ((q (round x)))
-	(list q (- x q))))))
+        (list q (- x q))))))
 
 ;;;###autoload
 (defun cl-mod (x y)
@@ -468,31 +468,31 @@ as an integer unless JUNK-ALLOWED is non-nil."
   (declare (side-effect-free t))
   (cl-check-type string string)
   (let* ((start (or start 0))
-	 (len	(length string))
-	 (end   (or end len))
-	 (radix (or radix 10)))
+         (len	(length string))
+         (end   (or end len))
+         (radix (or radix 10)))
     (or (<= start end len)
-	(error "Bad interval: [%d, %d)" start end))
+        (error "Bad interval: [%d, %d)" start end))
     (cl-flet ((skip-whitespace ()
-		(while (and (< start end)
-			    (= 32 (char-syntax (aref string start))))
-		  (setq start (1+ start)))))
+                (while (and (< start end)
+                            (= 32 (char-syntax (aref string start))))
+                  (setq start (1+ start)))))
       (skip-whitespace)
       (let ((sign (cl-case (and (< start end) (aref string start))
-		    (?+ (cl-incf start) +1)
-		    (?- (cl-incf start) -1)
-		    (t  +1)))
-	    digit sum)
-	(while (and (< start end)
-		    (setq digit (cl-digit-char-p (aref string start) radix)))
-	  (setq sum (+ (* (or sum 0) radix) digit)
-		start (1+ start)))
-	(skip-whitespace)
-	(cond ((and junk-allowed (null sum)) sum)
-	      (junk-allowed (* sign sum))
-	      ((or (/= start end) (null sum))
-	       (error "Not an integer string: `%s'" string))
-	      (t (* sign sum)))))))
+                    (?+ (cl-incf start) +1)
+                    (?- (cl-incf start) -1)
+                    (t  +1)))
+            digit sum)
+        (while (and (< start end)
+                    (setq digit (cl-digit-char-p (aref string start) radix)))
+          (setq sum (+ (* (or sum 0) radix) digit)
+                start (1+ start)))
+        (skip-whitespace)
+        (cond ((and junk-allowed (null sum)) sum)
+              (junk-allowed (* sign sum))
+              ((or (/= start end) (null sum))
+               (error "Not an integer string: `%s'" string))
+              (t (* sign sum)))))))
 
 
 ;; Random numbers.
@@ -518,23 +518,23 @@ Optional second arg STATE is a random-state object."
   ;; Inspired by "ran3" from Numerical Recipes.  Additive congruential method.
   (let ((vec (cl--random-state-vec state)))
     (if (integerp vec)
-	(let ((i 0) (j (- 1357335 (abs (% vec 1357333)))) (k 1))
-	  (setf (cl--random-state-vec state)
+        (let ((i 0) (j (- 1357335 (abs (% vec 1357333)))) (k 1))
+          (setf (cl--random-state-vec state)
                 (setq vec (make-vector 55 nil)))
-	  (aset vec 0 j)
-	  (while (> (setq i (% (+ i 21) 55)) 0)
-	    (aset vec i (setq j (prog1 k (setq k (- j k))))))
-	  (while (< (setq i (1+ i)) 200) (cl-random 2 state))))
+          (aset vec 0 j)
+          (while (> (setq i (% (+ i 21) 55)) 0)
+            (aset vec i (setq j (prog1 k (setq k (- j k))))))
+          (while (< (setq i (1+ i)) 200) (cl-random 2 state))))
     (let* ((i (cl-callf (lambda (x) (% (1+ x) 55)) (cl--random-state-i state)))
-	   (j (cl-callf (lambda (x) (% (1+ x) 55)) (cl--random-state-j state)))
-	   (n (aset vec i (logand 8388607 (- (aref vec i) (aref vec j))))))
+           (j (cl-callf (lambda (x) (% (1+ x) 55)) (cl--random-state-j state)))
+           (n (aset vec i (logand 8388607 (- (aref vec i) (aref vec j))))))
       (if (integerp lim)
-	  (if (<= lim 512) (% n lim)
-	    (if (> lim 8388607) (setq n (+ (ash n 9) (cl-random 512 state))))
-	    (let ((mask 1023))
-	      (while (< mask (1- lim)) (setq mask (1+ (+ mask mask))))
-	      (if (< (setq n (logand n mask)) lim) n (cl-random lim state))))
-	(* (/ n '8388608e0) lim)))))
+          (if (<= lim 512) (% n lim)
+            (if (> lim 8388607) (setq n (+ (ash n 9) (cl-random 512 state))))
+            (let ((mask 1023))
+              (while (< mask (1- lim)) (setq mask (1+ (+ mask mask))))
+              (if (< (setq n (logand n mask)) lim) n (cl-random lim state))))
+        (* (/ n '8388608e0) lim)))))
 
 ;;;###autoload
 (defun cl-make-random-state (&optional state)
@@ -550,7 +550,7 @@ If STATE is t, return a new state object seeded from the time of day."
 (defun cl--finite-do (func a b)
   (condition-case _
       (let ((res (funcall func a b)))   ; check for IEEE infinity
-	(and (numberp res) (/= res (/ res 2)) res))
+        (and (numberp res) (/= res (/ res 2)) res))
     (arith-error nil)))
 
 ;;;###autoload
@@ -562,35 +562,35 @@ This sets the values of: `cl-most-positive-float', `cl-most-negative-float',
 `cl-least-negative-normalized-float'."
   (or cl-most-positive-float (not (numberp '2e1))
       (let ((x '2e0) y z)
-	;; Find maximum exponent (first two loops are optimizations)
-	(while (cl--finite-do '* x x) (setq x (* x x)))
-	(while (cl--finite-do '* x (/ x 2)) (setq x (* x (/ x 2))))
-	(while (cl--finite-do '+ x x) (setq x (+ x x)))
-	(setq z x y (/ x 2))
-	;; Now cl-fill in 1's in the mantissa.
-	(while (and (cl--finite-do '+ x y) (/= (+ x y) x))
-	  (setq x (+ x y) y (/ y 2)))
-	(setq cl-most-positive-float x
-	      cl-most-negative-float (- x))
-	;; Divide down until mantissa starts rounding.
-	(setq x (/ x z) y (/ 16 z) x (* x y))
-	(while (condition-case _ (and (= x (* (/ x 2) 2)) (> (/ y 2) 0))
-		 (arith-error nil))
-	  (setq x (/ x 2) y (/ y 2)))
-	(setq cl-least-positive-normalized-float y
-	      cl-least-negative-normalized-float (- y))
-	;; Divide down until value underflows to zero.
-	(setq x (/ z) y x)
-	(while (condition-case _ (> (/ x 2) 0) (arith-error nil))
-	  (setq x (/ x 2)))
-	(setq cl-least-positive-float x
-	      cl-least-negative-float (- x))
-	(setq x '1e0)
-	(while (/= (+ '1e0 x) '1e0) (setq x (/ x 2)))
-	(setq cl-float-epsilon (* x 2))
-	(setq x '1e0)
-	(while (/= (- '1e0 x) '1e0) (setq x (/ x 2)))
-	(setq cl-float-negative-epsilon (* x 2))))
+        ;; Find maximum exponent (first two loops are optimizations)
+        (while (cl--finite-do '* x x) (setq x (* x x)))
+        (while (cl--finite-do '* x (/ x 2)) (setq x (* x (/ x 2))))
+        (while (cl--finite-do '+ x x) (setq x (+ x x)))
+        (setq z x y (/ x 2))
+        ;; Now cl-fill in 1's in the mantissa.
+        (while (and (cl--finite-do '+ x y) (/= (+ x y) x))
+          (setq x (+ x y) y (/ y 2)))
+        (setq cl-most-positive-float x
+              cl-most-negative-float (- x))
+        ;; Divide down until mantissa starts rounding.
+        (setq x (/ x z) y (/ 16 z) x (* x y))
+        (while (condition-case _ (and (= x (* (/ x 2) 2)) (> (/ y 2) 0))
+                 (arith-error nil))
+          (setq x (/ x 2) y (/ y 2)))
+        (setq cl-least-positive-normalized-float y
+              cl-least-negative-normalized-float (- y))
+        ;; Divide down until value underflows to zero.
+        (setq x (/ z) y x)
+        (while (condition-case _ (> (/ x 2) 0) (arith-error nil))
+          (setq x (/ x 2)))
+        (setq cl-least-positive-float x
+              cl-least-negative-float (- x))
+        (setq x '1e0)
+        (while (/= (+ '1e0 x) '1e0) (setq x (/ x 2)))
+        (setq cl-float-epsilon (* x 2))
+        (setq x '1e0)
+        (while (/= (- '1e0 x) '1e0) (setq x (/ x 2)))
+        (setq cl-float-negative-epsilon (* x 2))))
   nil)
 
 
@@ -606,8 +606,8 @@ too large if positive or too small if negative)."
   (declare (gv-setter
             (lambda (new)
               (macroexp-let2 nil new new
-		`(progn (cl-replace ,seq ,new :start1 ,start :end1 ,end)
-			,new)))))
+                `(progn (cl-replace ,seq ,new :start1 ,start :end1 ,end)
+                        ,new)))))
   (seq-subseq seq start end))
 
 ;;; This isn't a defalias because autoloading defaliases doesn't work
@@ -668,12 +668,12 @@ PROPLIST is a list of the sort returned by `symbol-plist'.
               (gv-letplace (getter setter) plist
                 (macroexp-let2* nil ((k tag) (d def))
                   (funcall do `(cl-getf ,getter ,k ,d)
-			   (lambda (v)
-			     (macroexp-let2 nil val v
-			       `(progn
-				  ,(funcall setter
-					    `(cl--set-getf ,getter ,k ,val))
-				  ,val)))))))))
+                           (lambda (v)
+                             (macroexp-let2 nil val v
+                               `(progn
+                                  ,(funcall setter
+                                            `(cl--set-getf ,getter ,k ,val))
+                                  ,val)))))))))
   (let ((val-tail (cdr (plist-member plist tag))))
     (if val-tail (car val-tail) def)))
 
@@ -696,7 +696,7 @@ PROPLIST is a list of the sort returned by `symbol-plist'.
   "Remove from SYMBOL's plist the property PROPNAME and its value."
   (let ((plist (symbol-plist symbol)))
     (if (and plist (eq propname (car plist)))
-	(progn (setplist symbol (cdr (cdr plist))) t)
+        (progn (setplist symbol (cdr (cdr plist))) t)
       (cl--do-remf plist propname))))
 
 ;;; Streams.
@@ -726,27 +726,27 @@ PROPLIST is a list of the sort returned by `symbol-plist'.
   (skip-chars-forward " ")
   (if (looking-at "(")
       (let ((skip (or (looking-at "((") (looking-at "(prog")
-		      (looking-at "(unwind-protect ")
-		      (looking-at "(function (")
-		      (looking-at "(cl--block-wrapper ")))
-	    (two (or (looking-at "(defun ") (looking-at "(defmacro ")))
-	    (let (or (looking-at "(let\\*? ") (looking-at "(while ")))
-	    (set (looking-at "(p?set[qf] ")))
-	(if (or skip let
-		(progn
-		  (forward-sexp)
-		  (and (>= (current-column) 78) (progn (backward-sexp) t))))
-	    (let ((nl t))
-	      (forward-char 1)
-	      (cl--do-prettyprint)
-	      (or skip (looking-at ")") (cl--do-prettyprint))
-	      (or (not two) (looking-at ")") (cl--do-prettyprint))
-	      (while (not (looking-at ")"))
-		(if set (setq nl (not nl)))
-		(if nl (insert "\n"))
-		(lisp-indent-line)
-		(cl--do-prettyprint))
-	      (forward-char 1))))
+                      (looking-at "(unwind-protect ")
+                      (looking-at "(function (")
+                      (looking-at "(cl--block-wrapper ")))
+            (two (or (looking-at "(defun ") (looking-at "(defmacro ")))
+            (let (or (looking-at "(let\\*? ") (looking-at "(while ")))
+            (set (looking-at "(p?set[qf] ")))
+        (if (or skip let
+                (progn
+                  (forward-sexp)
+                  (and (>= (current-column) 78) (progn (backward-sexp) t))))
+            (let ((nl t))
+              (forward-char 1)
+              (cl--do-prettyprint)
+              (or skip (looking-at ")") (cl--do-prettyprint))
+              (or (not two) (looking-at ")") (cl--do-prettyprint))
+              (while (not (looking-at ")"))
+                (if set (setq nl (not nl)))
+                (if nl (insert "\n"))
+                (lisp-indent-line)
+                (cl--do-prettyprint))
+              (forward-char 1))))
     (forward-sexp)))
 
 ;;;###autoload
@@ -954,7 +954,7 @@ Outputs to the current buffer."
                      (cl-struct-slot-value metatype 'class-slots class)
                    (cl-struct-unknown-slot nil))))
     (insert (propertize "Instance Allocated Slots:\n\n"
-			'face 'bold))
+                        'face 'bold))
     (let* ((has-doc nil)
            (slots-strings
             (mapcar
