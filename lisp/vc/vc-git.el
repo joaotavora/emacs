@@ -1273,8 +1273,7 @@ It is based on `log-edit-mode', and has Git-specific extensions."
   "Revert FILE to the version stored in the git repository."
   (if contents-done
       (vc-git-command nil 0 file "update-index" "--")
-    (vc-git-command nil 0 file "reset" "-q" "--")
-    (vc-git-command nil nil file "checkout" "-q" "--")))
+    (vc-git-command nil 0 file "restore" "--source=HEAD" "--staged" "--worktree")))
 
 (defvar vc-git-error-regexp-alist
   '(("^ \\(.+\\)\\> *|" 1 nil nil 0))
