@@ -1285,12 +1285,16 @@ GUESSED-MAJOR-MODES-SYM are bound to the useful return values of
   ;; (should (eglot--glob-match "{foo,bar}/**" "bar"))
 
   ;; VSCode also supports nested blobs.  Do we care?
+  ;; Apparently yes: github#1403
   ;;
-  ;; (should (eglot--glob-match "{**/*.d.ts,**/*.js}" "/testing/foo.js"))
-  ;; (should (eglot--glob-match "{**/*.d.ts,**/*.js}" "testing/foo.d.ts"))
-  ;; (should (eglot--glob-match "{**/*.d.ts,**/*.js,foo.[0-9]}" "foo.5"))
-  ;; (should (eglot--glob-match "prefix/{**/*.d.ts,**/*.js,foo.[0-9]}" "prefix/foo.8"))
-  )
+  (should (eglot--glob-match "{**/*.d.ts,**/*.js}" "/testing/foo.js"))
+  (should (eglot--glob-match "{**/*.d.ts,**/*.js}" "testing/foo.d.ts"))
+  (should (eglot--glob-match "{**/*.d.ts,**/*.js,foo.[0-9]}" "foo.5"))
+  (should-not (eglot--glob-match "{**/*.d.ts,**/*.js,foo.[0-4]}" "foo.5"))
+  (should (eglot--glob-match "prefix/{**/*.d.ts,**/*.js,foo.[0-9]}"
+                             "prefix/foo.8"))
+  (should (eglot--glob-match "prefix/{**/*.js,/**/foo.[0-9]}.suffix"
+                             "prefix/a/b/c/d/foo.5.trailer")))
 
 (defvar tramp-histfile-override)
 (defun eglot--call-with-tramp-test (fn)
