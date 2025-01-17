@@ -945,6 +945,14 @@ destination window is chosen using 'display-buffer-alist'.  Example:
                                    display-buffer-use-some-window)
                                   (some-window . mru))))
 
+** ElDoc
+
+*** New minor mode 'eldoc-hover-mode'.
+When using the mouse and turning on this minor mode, ElDoc will display
+documentation about the thing under the mouse after an amount of time
+specified in 'eldoc-hover-delay'.
+
+
 
 * New Modes and Packages in Emacs 31.1
 

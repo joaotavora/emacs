@@ -1518,9 +1518,17 @@ some short time.  This avoids annoying flickering of documentation
 messages in the echo area or the mode line when you type quickly and
 without delay.
 
+@findex eldoc-hover-mode
+Additionally, mouse users may want to enable @kbd{M-x eldoc-hover-mode}
+which schedules the display of documentation after the move pointer has
+hovered over a symbol for more than a given amount of time specified in
+@code{eldoc-hover-delay}.
+
 @findex eldoc-print-current-symbol-info
-You can also trigger the display of documentation for a symbol at
-point by using the command @kbd{M-x eldoc-print-current-symbol-info}.
+@findex eldoc
+You can also trigger the display of documentation for a symbol at point
+by using the command @kbd{M-x eldoc-print-current-symbol-info}, or
+simply @kbd{M-x eldoc}.
 
   The following variables can be used to configure ElDoc mode:
 
@@ -1595,6 +1603,12 @@ buffer's major-mode.  These functions act as a collection of backends
 for ElDoc.  Major modes register their documentation lookup functions
 with ElDoc by adding their functions to the buffer-local value of this
 variable.
+
+@item eldoc-hover-delay
+This user option specifies the number of seconds to wait before invoking
+ElDoc when hovering over symbols.  Only takes effect if
+@code{eldoc-hover-mode} is active.  The default is 1.0 sec.
+
 @end vtable
 
 @node Hideshow

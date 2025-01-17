@@ -5,7 +5,7 @@
 ;; Author: Noah Friedman <friedman@splode.com>
 ;; Keywords: extensions
 ;; Created: 1995-10-06
-;; Version: 1.15.0
+;; Version: 1.16.0
 ;; Package-Requires: ((emacs "26.3"))
 
 ;; This is a GNU ELPA :core package.  Avoid functionality that is not
@@ -956,6 +956,56 @@ the docstrings eventually produced, using
            (let ((non-essential t))
              (setq eldoc--last-request-state token)
              (eldoc--invoke-strategy nil))))))
+
+
+;;;; `eldoc-hover-mode'
+(defvar eldoc-hover-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-movement] #'eldoc--hover-mode-handler)
+    map)
+  "Keymap for `eldoc-hover-mode-map'.")
+
+(defvar eldoc--hover-timer nil "Auxiliary variable for `eldoc-hover-mode'")
+
+;;;###autoload
+(define-minor-mode eldoc-hover-mode
+  "Invoke ElDoc when mouse hovers over symbols."
+  :keymap eldoc-hover-mode-map
+  :version "1.16.0"
+  ;;; FIXME: what do do about turning on `track-mouse' and not turning
+  ;;; it back off?  AFAIK Emacs there was never a good solution for
+  ;;; this, so just live with it.
+  (cond (eldoc-hover-mode (setq-local track-mouse t))))
+
+(defcustom eldoc-hover-delay 1.00
+  "Seconds to wait before invoking ElDoc when hovering over symbols."
+  :version "1.16.0"
+  :type 'number)
+
+(defun eldoc--hover-mode-handler (event)
+  (interactive "e")
+  (let* ((eend (event-end event))
+         (orig-window (posn-window eend))
+         (orig-pos (posn-point eend)))
+    (when (and (windowp orig-window) orig-pos)
+      (if eldoc--hover-timer (cancel-timer eldoc--hover-timer))
+      (setq eldoc--hover-timer
+            (run-at-time
+             eldoc-hover-delay nil
+             (lambda ()
+               (pcase-let*
+                   ((`(,frame ,x . ,y) (mouse-position))
+                    (posn (and frame (posn-at-x-y x y frame))))
+                 (when (and (eq (selected-window) orig-window)
+                            (eq (posn-window posn)
+                                (posn-window eend))
+                            (eq (posn-point posn) orig-pos))
+                   (with-current-buffer (window-buffer orig-window)
+                     (save-excursion
+                       (goto-char orig-pos)
+                       (eldoc-print-current-symbol-info nil)))))))))))
+
+(eldoc-add-command "eldoc--hover-mode-handler")
 
 
 ;; This section only affects ElDoc output to the echo area, as in
