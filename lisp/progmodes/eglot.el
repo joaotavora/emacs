@@ -4282,50 +4282,75 @@ If NOERROR, return predicate, else erroring function."
                          (setq region (cons nil nil)
                                timer nil)))))))))
 
+(defvar eglot-tweak-inlay-hint-fn nil
+  "Function for manipulating inlay hints before rendering them.
+If non-nil, value is a function taking at least five arguments
+(LABEL LPAD RPAD HINT OV).  LABEL is the inlay hint's text.  LPAD and
+RPAD are
+(possibly empty) strings of whitespace for padding, as suggested by the
+server.  HINT is the full LSP \='InlayHint' object.  OV is the overlay
+object Eglot will use for the inlay hint.  The return value is a string
+determining how the inlay hint is rendered.  If the function returns
+nil, the overlay will be immediately deleted.
+
+If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
+
 (defun eglot--update-hints-1 (from to)
   "Do most work for `eglot--update-hints', including LSP request."
   (let* ((buf (current-buffer))
          (paint-hint
-          (eglot--lambda ((InlayHint) position kind label paddingLeft paddingRight)
-            (goto-char (eglot--lsp-position-to-point position))
-            (when (or (> (point) to) (< (point) from)) (cl-return))
-            (let* ((left-pad (and paddingLeft
-                                  (not (eq paddingLeft :json-false))
-                                  (not (memq (char-before) '(32 9))) " "))
-                   (right-pad (and paddingRight
-                                   (not (eq paddingRight :json-false))
-                                   (not (memq (char-after) '(32 9))) " "))
-                   (peg-after-p (eql kind 1)))
-              (cl-labels
-                  ((make-ov ()
-                     (if peg-after-p
-                         (make-overlay (point) (1+ (point)) nil t)
-                       (make-overlay (1- (point)) (point) nil nil nil)))
-                   (do-it (label lpad rpad i n)
-                     (let* ((firstp (zerop i))
-                            (tweak-cursor-p (and firstp peg-after-p))
-                            (ov (make-ov))
-                            (text (concat lpad label rpad)))
-                       (when tweak-cursor-p (put-text-property 0 1 'cursor 1 text))
-                       (overlay-put ov (if peg-after-p 'before-string 'after-string)
-                                    (propertize
-                                     text
-                                     'face (pcase kind
-                                             (1 'eglot-type-hint-face)
-                                             (2 'eglot-parameter-hint-face)
-                                             (_ 'eglot-inlay-hint-face))))
-                       (overlay-put ov 'priority (if peg-after-p i (- n i)))
-                       (overlay-put ov 'eglot--inlay-hint t)
-                       (overlay-put ov 'evaporate t)
-                       (overlay-put ov 'eglot--overlay t))))
-                (if (stringp label) (do-it label left-pad right-pad 0 1)
-                  (cl-loop
-                   for i from 0 for ldetail across label
-                   do (eglot--dbind ((InlayHintLabelPart) value) ldetail
-                        (do-it value
-                               (and (zerop i) left-pad)
-                               (and (= i (1- (length label))) right-pad)
-                               i (length label))))))))))
+          (lambda (hint)
+            (eglot--dbind ((InlayHint) position kind label paddingLeft paddingRight)
+                hint
+              (goto-char (eglot--lsp-position-to-point position))
+              (when (or (> (point) to) (< (point) from)) (cl-return))
+              (let* ((left-pad (and paddingLeft
+                                    (not (eq paddingLeft :json-false))
+                                    (not (memq (char-before) '(32 9))) " "))
+                     (right-pad (and paddingRight
+                                     (not (eq paddingRight :json-false))
+                                     (not (memq (char-after) '(32 9))) " "))
+                     (peg-after-p (eql kind 1)))
+                (cl-labels
+                    ((make-ov ()
+                       (if peg-after-p
+                           (make-overlay (point) (1+ (point)) nil t)
+                         (make-overlay (1- (point)) (point) nil nil nil)))
+                     (do-it (label lpad rpad i n)
+                       (let* ((firstp (zerop i))
+                              (tweak-cursor-p (and firstp peg-after-p))
+                              (ov (make-ov))
+                              (text
+                               (if (functionp eglot-tweak-inlay-hint-fn)
+                                   (funcall eglot-tweak-inlay-hint-fn
+                                            label lpad rpad hint ov)
+                                 (concat lpad label rpad))))
+                         (cond
+                          (text
+                           (when (and (cl-plusp (length text))
+                                      tweak-cursor-p)
+                             (put-text-property 0 1 'cursor 1 text))
+                           (overlay-put ov (if peg-after-p 'before-string 'after-string)
+                                        (propertize
+                                         text
+                                         'face (pcase kind
+                                                 (1 'eglot-type-hint-face)
+                                                 (2 'eglot-parameter-hint-face)
+                                                 (_ 'eglot-inlay-hint-face))))
+                           (overlay-put ov 'priority (if peg-after-p i (- n i)))
+                           (overlay-put ov 'eglot--inlay-hint t)
+                           (overlay-put ov 'evaporate t)
+                           (overlay-put ov 'eglot--overlay t))
+                          (t
+                           (delete-overlay ov))))))
+                  (if (stringp label) (do-it label left-pad right-pad 0 1)
+                    (cl-loop
+                     for i from 0 for ldetail across label
+                     do (eglot--dbind ((InlayHintLabelPart) value) ldetail
+                          (do-it value
+                                 (and (zerop i) left-pad)
+                                 (and (= i (1- (length label))) right-pad)
+                                 i (length label)))))))))))
     (jsonrpc-async-request
      (eglot--current-server-or-lose)
      :textDocument/inlayHint
