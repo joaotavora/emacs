@@ -774,8 +774,7 @@ As a rule, the inner frame is subdivided into the frame's root window
 rule: A @dfn{minibuffer-less frame} contains a root window only and does
 not contain a minibuffer window.  A @dfn{minibuffer-only frame} contains
 only a minibuffer window which also serves as that frame's root window.
-See @ref{Initial Parameters} for how to create such frame
-configurations.
+@xref{Initial Parameters}, for how to create such frame configurations.
 
 @item Text Area
 @cindex text area
@@ -4760,7 +4759,7 @@ and secondary selections by saving the value supplied into a variable
 subsequent calls to @code{gui-get-selection} return.
 
   From the clipboard, @code{gui-get-selection} is capable of returning
-UTF-8 string data of the type @code{STRING}, the @code{TAREGTS} data
+UTF-8 string data of the type @code{STRING}, the @code{TARGETS} data
 type, or image and application data of any MIME type.
 @code{gui-set-selection} sets only string data, much as under
 MS-Windows, although this data is not affected by the value of

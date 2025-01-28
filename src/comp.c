@@ -720,11 +720,7 @@ format_string (const char *format, ...)
   va_start (va, format);
   int res = vsnprintf (scratch_area, sizeof (scratch_area), format, va);
   if (res >= sizeof (scratch_area))
-    {
-      scratch_area[sizeof (scratch_area) - 4] = '.';
-      scratch_area[sizeof (scratch_area) - 3] = '.';
-      scratch_area[sizeof (scratch_area) - 2] = '.';
-    }
+    strcpy (scratch_area + sizeof scratch_area - 4, "...");
   va_end (va);
   return scratch_area;
 }
@@ -862,7 +858,7 @@ freloc_check_fill (void)
 static void
 bcall0 (Lisp_Object f)
 {
-  Ffuncall (1, &f);
+  calln (f);
 }
 
 static gcc_jit_block *
@@ -2279,7 +2275,7 @@ emit_limple_insn (Lisp_Object insn)
   ptrdiff_t i = 0;
   FOR_EACH_TAIL (p)
     {
-      if (i == sizeof (arg) / sizeof (Lisp_Object))
+      if (i == ARRAYELTS (arg))
 	break;
       arg[i++] = XCAR (p);
     }

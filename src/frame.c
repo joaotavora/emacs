@@ -401,7 +401,7 @@ frame_windows_min_size (Lisp_Object frame, Lisp_Object horizontal,
 			      : FRAME_COLUMN_WIDTH (f)));
     }
   else
-    retval = XFIXNUM (call4 (Qframe_windows_min_size, frame, horizontal,
+    retval = XFIXNUM (calln (Qframe_windows_min_size, frame, horizontal,
 			     ignore, pixelwise));
 
   /* Don't allow too small height of text-mode frames, or else cm.c
@@ -890,7 +890,7 @@ adjust_frame_size (struct frame *f, int new_text_width, int new_text_height,
 #endif
     }
   else if (new_text_cols != old_text_cols)
-    call2 (Qwindow__pixel_to_total, frame, Qt);
+    calln (Qwindow__pixel_to_total, frame, Qt);
 
   if (new_inner_height != old_inner_height
       /* When the top margin has changed we have to recalculate the top
@@ -907,7 +907,7 @@ adjust_frame_size (struct frame *f, int new_text_width, int new_text_height,
 	  FrameRows (FRAME_TTY (f)) = new_text_lines + FRAME_TOP_MARGIN (f);
     }
   else if (new_text_lines != old_text_lines)
-    call2 (Qwindow__pixel_to_total, frame, Qnil);
+    calln (Qwindow__pixel_to_total, frame, Qnil);
 
   /* Assign new sizes.  */
   FRAME_COLS (f) = new_text_cols;
@@ -1153,7 +1153,7 @@ make_frame_without_minibuffer (Lisp_Object mini_window, KBOARD *kb,
 	  Lisp_Object initial_frame;
 
 	  /* If there's no minibuffer frame to use, create one.  */
-	  initial_frame = call1 (Qmake_initial_minibuffer_frame,
+	  initial_frame = calln (Qmake_initial_minibuffer_frame,
 				 display);
 	  kset_default_minibuffer_frame (kb, initial_frame);
 	}
@@ -1283,8 +1283,6 @@ static struct frame *
 make_terminal_frame (struct terminal *terminal, Lisp_Object parent,
 		     Lisp_Object params)
 {
-  char name[sizeof "F" + INT_STRLEN_BOUND (tty_frame_count)];
-
   if (!terminal->name)
     error ("Terminal is not live, can't create new frames on it");
 
@@ -1364,7 +1362,7 @@ make_terminal_frame (struct terminal *terminal, Lisp_Object parent,
   XSETFRAME (frame, f);
   Vframe_list = Fcons (frame, Vframe_list);
 
-  fset_name (f, make_formatted_string (name, "F%"PRIdMAX, ++tty_frame_count));
+  fset_name (f, make_formatted_string ("F%"PRIdMAX, ++tty_frame_count));
 
   SET_FRAME_VISIBLE (f, true);
 
@@ -1773,15 +1771,19 @@ do_switch_frame (Lisp_Object frame, int track, int for_deletion, Lisp_Object nor
       struct tty_display_info *tty = FRAME_TTY (f);
       Lisp_Object top_frame = tty->top_frame;
 
-      /* Don't mark the frame garbaged if we are switching to the frame
-	 that is already the top frame of that TTY.  */
-      if (!EQ (frame, top_frame) && root_frame (f) != XFRAME (top_frame))
+      /* Switching to a frame on a different root frame is special.  The
+	 old root frame has to be marked invisible, and the new root
+	 frame has to be made visible.  */
+      if (!EQ (frame, top_frame)
+	  && (!FRAMEP (top_frame)
+	      || root_frame (f) != root_frame (XFRAME (top_frame))))
 	{
 	  struct frame *new_root = root_frame (f);
 	  SET_FRAME_VISIBLE (new_root, true);
 	  SET_FRAME_VISIBLE (f, true);
 
-	  /* Mark previously displayed frame as no longer visible.  */
+	  /* Mark previously displayed root frame as no longer
+	     visible.  */
 	  if (FRAMEP (top_frame))
 	    {
 	      struct frame *top = XFRAME (top_frame);
@@ -1792,7 +1794,7 @@ do_switch_frame (Lisp_Object frame, int track, int for_deletion, Lisp_Object nor
 
 	  tty->top_frame = frame;
 
-	  /* FIXME: Why is it correct to set FrameCols/Rows?  */
+	  /* FIXME: Why is it correct to set FrameCols/Rows here?  */
 	  if (!FRAME_PARENT_FRAME (f))
 	    {
 	      /* If the new TTY frame changed dimensions, we need to
@@ -1803,6 +1805,11 @@ do_switch_frame (Lisp_Object frame, int track, int for_deletion, Lisp_Object nor
 	      if (FRAME_TOTAL_LINES (f) != FrameRows (tty))
 		FrameRows (tty) = FRAME_TOTAL_LINES (f);
 	    }
+	}
+      else
+	{
+	  SET_FRAME_VISIBLE (f, true);
+	  tty->top_frame = frame;
 	}
     }
 
@@ -1818,7 +1825,7 @@ do_switch_frame (Lisp_Object frame, int track, int for_deletion, Lisp_Object nor
 	 non-active minibuffer.  */
       && NILP (Fminibufferp (XWINDOW (f->minibuffer_window)->contents, Qt)))
     {
-      Lisp_Object w = call1 (Qget_mru_window, frame);
+      Lisp_Object w = calln (Qget_mru_window, frame);
       if (WINDOW_LIVE_P (w)) /* W can be nil in minibuffer-only frames.  */
         Fset_frame_selected_window (frame, w, Qnil);
     }
@@ -2980,7 +2987,7 @@ mouse_position (bool call_mouse_position_function)
     lispy_dummy = Qnil;
   retval = Fcons (lispy_dummy, Fcons (x, y));
   if (call_mouse_position_function && !NILP (Vmouse_position_function))
-    retval = call1 (Vmouse_position_function, retval);
+    retval = calln (Vmouse_position_function, retval);
   return retval;
 }
 
@@ -3022,7 +3029,7 @@ Y.  */)
 
   retval = Fcons (lispy_dummy, Fcons (x, y));
   if (!NILP (Vmouse_position_function))
-    retval = call1 (Vmouse_position_function, retval);
+    retval = calln (Vmouse_position_function, retval);
   return retval;
 }
 
@@ -3284,19 +3291,13 @@ DEFUN ("frame-visible-p", Fframe_visible_p, Sframe_visible_p,
 Return the symbol `icon' if FRAME is iconified or \"minimized\".
 Return nil if FRAME was made invisible, via `make-frame-invisible'.
 On graphical displays, invisible frames are not updated and are
-usually not displayed at all, even in a window system's \"taskbar\".
-
-If FRAME is a text terminal frame, this always returns t.
-Such frames are always considered visible, whether or not they are
-currently being displayed on the terminal.  */)
+usually not displayed at all, even in a window system's \"taskbar\".  */)
   (Lisp_Object frame)
 {
   CHECK_LIVE_FRAME (frame);
   struct frame *f = XFRAME (frame);
 
   if (FRAME_VISIBLE_P (f))
-    return Qt;
-  else if (is_tty_root_frame (f))
     return Qt;
   if (FRAME_ICONIFIED_P (f))
     return Qicon;
@@ -3499,14 +3500,12 @@ set_term_frame_name (struct frame *f, Lisp_Object name)
   /* If NAME is nil, set the name to F<num>.  */
   if (NILP (name))
     {
-      char namebuf[sizeof "F" + INT_STRLEN_BOUND (tty_frame_count)];
-
       /* Check for no change needed in this very common case
 	 before we do any consing.  */
       if (frame_name_fnn_p (SSDATA (f->name), SBYTES (f->name)))
 	return;
 
-      name = make_formatted_string (namebuf, "F%"PRIdMAX, ++tty_frame_count);
+      name = make_formatted_string ("F%"PRIdMAX, ++tty_frame_count);
     }
   else
     {
@@ -4482,7 +4481,7 @@ frame_float (struct frame *f, Lisp_Object val, enum frame_float_type what,
 	      Lisp_Object frame;
 
 	      XSETFRAME (frame, f);
-	      monitor_attributes = call1 (Qframe_monitor_attributes, frame);
+	      monitor_attributes = calln (Qframe_monitor_attributes, frame);
 	      if (NILP (monitor_attributes))
 		{
 		  /* No monitor attributes available.  */
@@ -4527,7 +4526,7 @@ frame_float (struct frame *f, Lisp_Object val, enum frame_float_type what,
 	  Lisp_Object frame, outer_edges;
 
 	  XSETFRAME (frame, f);
-	  outer_edges = call2 (Qframe_edges, frame, Qouter_edges);
+	  outer_edges = calln (Qframe_edges, frame, Qouter_edges);
 
 	  if (!NILP (outer_edges))
 	    {
@@ -4933,7 +4932,6 @@ gui_report_frame_params (struct frame *f, Lisp_Object *alistptr)
 {
   Lisp_Object tem;
   uintmax_t w;
-  char buf[INT_BUFSIZE_BOUND (w)];
 
   /* Represent negative positions (off the top or left screen edge)
      in a way that Fmodify_frame_parameters will understand correctly.  */
@@ -4984,7 +4982,7 @@ gui_report_frame_params (struct frame *f, Lisp_Object *alistptr)
      warnings.  */
   w = (uintptr_t) FRAME_NATIVE_WINDOW (f);
   store_in_alist (alistptr, Qwindow_id,
-		  make_formatted_string (buf, "%"PRIuMAX, w));
+		  make_formatted_string ("%"PRIuMAX, w));
 #ifdef HAVE_X_WINDOWS
 #ifdef USE_X_TOOLKIT
   /* Tooltip frame may not have this widget.  */
@@ -4992,7 +4990,7 @@ gui_report_frame_params (struct frame *f, Lisp_Object *alistptr)
 #endif
     w = (uintptr_t) FRAME_OUTER_WINDOW (f);
   store_in_alist (alistptr, Qouter_window_id,
-		  make_formatted_string (buf, "%"PRIuMAX, w));
+		  make_formatted_string ("%"PRIuMAX, w));
 #endif
   store_in_alist (alistptr, Qicon_name, f->icon_name);
   store_in_alist (alistptr, Qvisibility,
@@ -6127,7 +6125,7 @@ On Nextstep, this just calls `ns-parse-geometry'.  */)
 
 #ifdef HAVE_NS
   if (strchr (SSDATA (string), ' ') != NULL)
-    return call1 (Qns_parse_geometry, string);
+    return calln (Qns_parse_geometry, string);
 #endif
   int geometry = XParseGeometry (SSDATA (string),
 				 &x, &y, &width, &height);
@@ -6539,7 +6537,7 @@ have changed.  */)
 
   /* Now call this to apply the existing value(s) of the `default'
      face.  */
-  call2 (Qface_set_after_frame_default, frame, params);
+  calln (Qface_set_after_frame_default, frame, params);
 
   /* Restore the value of the `font-parameter' parameter, as
      `face-set-after-frame-default' will have changed it through its
@@ -7144,11 +7142,11 @@ Gtk+ tooltips are not used) and on Windows.  */);
   tooltip_reuse_hidden_frame = false;
 
   DEFVAR_BOOL ("use-system-tooltips", use_system_tooltips,
-	       doc: /* Use the toolkit to display tooltips.
-This option is only meaningful when Emacs is built with GTK+ or Haiku
-windowing support, and results in tooltips that look like those
-displayed by other GTK+ or Haiku programs, but will not be able to
-display text properties inside tooltip text.  */);
+	       doc: /* Whether to use the toolkit to display tooltips.
+This option is only meaningful when Emacs is built with GTK+, NS or Haiku
+windowing support, and, if it's non-nil (the default), it results in
+tooltips that look like those displayed by other GTK+/NS/Haiku programs,
+but will not be able to display text properties inside tooltip text.  */);
   use_system_tooltips = true;
 
   DEFVAR_LISP ("iconify-child-frame", iconify_child_frame,
