@@ -994,7 +994,7 @@ the docstrings eventually produced, using
              eldoc-hover-delay nil
              (lambda ()
                (pcase-let*
-                   ((`(,frame ,x . ,y) (mouse-position))
+                   ((`(,frame ,x . ,y) (mouse-pixel-position))
                     (posn (and frame (posn-at-x-y x y frame))))
                  (when (and (eq (selected-window) orig-window)
                             (eq (posn-window posn)
