@@ -1005,8 +1005,6 @@ the docstrings eventually produced, using
                        (goto-char orig-pos)
                        (eldoc-print-current-symbol-info nil)))))))))))
 
-(eldoc-add-command "eldoc--hover-mode-handler")
-
 
 ;; This section only affects ElDoc output to the echo area, as in
 ;; `eldoc-display-in-echo-area'.
@@ -1052,7 +1050,7 @@ the docstrings eventually produced, using
  "move-end-of-" "newline" "next-" "other-window" "pop-global-mark"
  "previous-" "recenter" "right-" "scroll-" "self-insert-command"
  "split-window-" "up-list" "touch-screen-handle-touch"
- "analyze-text-conversion")
+ "analyze-text-conversion" "eldoc--hover-mode-handler")
 
 (provide 'eldoc)
 
