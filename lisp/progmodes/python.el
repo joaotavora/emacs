@@ -259,7 +259,15 @@
 (require 'compat)
 (require 'project nil 'noerror)
 (require 'seq)
-(treesit-declare-unavailable-functions)
+
+(declare-function treesit-parser-create "treesit.c")
+(declare-function treesit-induce-sparse-tree "treesit.c")
+(declare-function treesit-node-child-by-field-name "treesit.c")
+(declare-function treesit-node-type "treesit.c")
+(declare-function treesit-node-start "treesit.c")
+(declare-function treesit-node-end "treesit.c")
+(declare-function treesit-node-parent "treesit.c")
+(declare-function treesit-node-prev-sibling "treesit.c")
 
 ;; Avoid compiler warnings
 (defvar compilation-error-regexp-alist)
@@ -283,7 +291,7 @@
 ;;;###autoload
 (add-to-list 'auto-mode-alist (cons python--auto-mode-alist-regexp 'python-mode))
 ;;;###autoload
-(add-to-list 'interpreter-mode-alist (cons (purecopy "python[0-9.]*") 'python-mode))
+(add-to-list 'interpreter-mode-alist '("python[0-9.]*" . python-mode))
 
 (defgroup python nil
   "Python Language's flying circus support for Emacs."

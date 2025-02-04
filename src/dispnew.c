@@ -95,12 +95,14 @@ static void check_matrix_pointers (struct glyph_matrix *,
 static void mirror_line_dance (struct window *, int, int, int *, char *);
 static void update_window_tree (struct window *);
 static void update_window (struct window *);
-static void write_matrix (struct frame *, bool, bool, bool);
+static void write_matrix (struct frame *, bool, bool);
 static void scrolling (struct frame *);
 static void set_window_cursor_after_update (struct window *);
 static void adjust_frame_glyphs_for_window_redisplay (struct frame *);
 static void adjust_frame_glyphs_for_frame_redisplay (struct frame *);
 static void set_window_update_flags (struct window *w, bool on_p);
+static void tty_set_cursor (struct frame *f);
+
 
 #if 0 /* Please leave this in as a debugging aid.  */
 static void
@@ -138,11 +140,6 @@ static int glyph_pool_count;
    This may only be used for terminal frames.  */
 
 #ifdef GLYPH_DEBUG
-
-static int window_to_frame_vpos (struct window *, int);
-static int window_to_frame_hpos (struct window *, int);
-#define WINDOW_TO_FRAME_VPOS(W, VPOS) window_to_frame_vpos (W, VPOS)
-#define WINDOW_TO_FRAME_HPOS(W, HPOS) window_to_frame_hpos (W, HPOS)
 
 /* One element of the ring buffer containing redisplay history
    information.  */
@@ -234,11 +231,6 @@ DEFUN ("dump-redisplay-history", Fdump_redisplay_history,
   return Qnil;
 }
 
-
-#else /* not GLYPH_DEBUG */
-
-#define WINDOW_TO_FRAME_VPOS(W, VPOS) ((VPOS) + WINDOW_TOP_EDGE_LINE (W))
-#define WINDOW_TO_FRAME_HPOS(W, HPOS) ((HPOS) + WINDOW_LEFT_EDGE_COL (W))
 
 #endif /* GLYPH_DEBUG */
 
@@ -3167,8 +3159,6 @@ check_matrix_pointers (struct glyph_matrix *window_matrix,
 		      VPOS and HPOS translations
  **********************************************************************/
 
-#ifdef GLYPH_DEBUG
-
 /* Translate vertical position VPOS which is relative to window W to a
    vertical position relative to W's frame.  */
 
@@ -3194,9 +3184,6 @@ window_to_frame_hpos (struct window *w, int hpos)
   hpos += WINDOW_LEFT_EDGE_COL (w);
   return hpos;
 }
-
-#endif /* GLYPH_DEBUG */
-
 
 
 /**********************************************************************
@@ -3879,8 +3866,8 @@ abs_cursor_pos (struct frame *f, int *x, int *y)
 	 a new cursor position has been computed.  */
       && w->cursor.vpos < WINDOW_TOTAL_LINES (w))
     {
-      int wx = WINDOW_TO_FRAME_HPOS (w, w->cursor.hpos);
-      int wy = WINDOW_TO_FRAME_VPOS (w, w->cursor.vpos);
+      int wx = window_to_frame_hpos (w, w->cursor.hpos);
+      int wy = window_to_frame_vpos (w, w->cursor.vpos);
 
       wx += max (0, w->left_margin_cols);
 
@@ -3922,10 +3909,12 @@ frame_selected_window_frame (struct frame *f)
 static bool
 is_cursor_obscured (struct frame *root)
 {
-  /* Determine in which frame on ROOT the cursor could be.  */
-  struct frame *sf = frame_selected_window_frame (root);
-  if (sf == NULL)
-    return false;
+  /* Which frame contains the cursor?  If the selected frame is in
+     root's z-order, it's the selected frame.  Otherwise fall back to
+     the root itself.  */
+  struct frame *sf = (frame_ancestor_p (root, SELECTED_FRAME ())
+		      ? SELECTED_FRAME ()
+		      : root);
 
   /* Give up if we can't tell where the cursor currently is.  */
   int x, y;
@@ -4009,9 +3998,18 @@ combine_updates_for_frame (struct frame *f, bool inhibit_scrolling)
     }
 
   update_begin (root);
-  write_matrix (root, inhibit_scrolling, 1, false);
+  write_matrix (root, inhibit_scrolling, false);
   make_matrix_current (root);
   update_end (root);
+
+  /* The selected frame determines where the cursor on ttys goes, except
+     when it is a frame that is completely unrelated to the frame being
+     displayed.  This can happen with multi-tty, when the selected frame
+     can be a window-system frame.  */
+  if (frame_ancestor_p (root, SELECTED_FRAME ()))
+    tty_set_cursor (SELECTED_FRAME ());
+  else
+    tty_set_cursor (root);
 
   /* If a child is displayed, and the cursor is displayed in another
      frame, the child might lay above the cursor, so that it appears to
@@ -4081,22 +4079,20 @@ void
 update_frame_with_menu (struct frame *f, int row, int col)
 {
   struct window *root_window = XWINDOW (f->root_window);
-  bool cursor_at_point_p;
 
   eassert (FRAME_TERMCAP_P (f));
 
   /* Update the display.  */
   update_begin (f);
-  cursor_at_point_p = !(row >= 0 && col >= 0);
-  /* Do not stop due to pending input, and do not try scrolling.  This
-     means that write_glyphs will always return false.  */
-  write_matrix (f, 1, cursor_at_point_p, true);
+  write_matrix (f, true, true);
   make_matrix_current (f);
   clear_desired_matrices (f);
   /* ROW and COL tell us where in the menu to position the cursor, so
      that screen readers know the active region on the screen.  */
-  if (!cursor_at_point_p)
+  if (row >= 0 && col >= 0)
     cursor_to (f, row, col);
+  else
+    tty_set_cursor (f);
   update_end (f);
   flush_terminal (f);
 
@@ -4600,9 +4596,6 @@ gui_update_window_end (struct window *w, bool cursor_on_p,
 	display_and_set_cursor (w, true,
 				w->output_cursor.hpos, w->output_cursor.vpos,
 				w->output_cursor.x, w->output_cursor.y);
-
-      if (cursor_in_mouse_face_p (w) && cursor_on_p)
-	mouse_face_overwritten_p = 1;
 
       if (draw_window_fringes (w, true))
 	{
@@ -5591,10 +5584,8 @@ scrolling_window (struct window *w, int tab_line_p)
  ************************************************************************/
 
 static void
-tty_set_cursor (void)
+tty_set_cursor (struct frame *f)
 {
-  struct frame *f = SELECTED_FRAME ();
-
   if ((cursor_in_echo_area
        /* If we are showing a message instead of the mini-buffer,
 	  show the cursor for the message instead of for the
@@ -5656,7 +5647,7 @@ tty_set_cursor (void)
   else
     {
       /* We have only one cursor on terminal frames.  Use it to
-	 display the cursor of the selected window.  */
+	 display the cursor of the selected window of the frame.  */
       struct window *w = XWINDOW (FRAME_SELECTED_WINDOW (f));
       if (w->cursor.vpos >= 0
 	  /* The cursor vpos may be temporarily out of bounds
@@ -5666,8 +5657,8 @@ tty_set_cursor (void)
 	     a new cursor position has been computed.  */
 	  && w->cursor.vpos < WINDOW_TOTAL_LINES (w))
 	{
-	  int x = WINDOW_TO_FRAME_HPOS (w, w->cursor.hpos);
-	  int y = WINDOW_TO_FRAME_VPOS (w, w->cursor.vpos);
+	  int x = window_to_frame_hpos (w, w->cursor.hpos);
+	  int y = window_to_frame_vpos (w, w->cursor.vpos);
 
 	  x += max (0, w->left_margin_cols);
 	  cursor_to (f, y, x);
@@ -5675,13 +5666,12 @@ tty_set_cursor (void)
     }
 }
 
-/* Write desired matix of tty frame F and make it current.
+/* Write desired matrix of tty frame F and make it current.
    INHIBIT_ID_P means that scrolling by insert/delete should not be tried.
-   SET_CURSOR_P false means do not set cursor at point in selected window.  */
+   UPDATING_MENU_P true means we are called for updating a tty menu.  */
 
 static void
-write_matrix (struct frame *f, bool inhibit_id_p,
-	      bool set_cursor_p, bool updating_menu_p)
+write_matrix (struct frame *f, bool inhibit_id_p, bool updating_menu_p)
 {
   /* If we cannot insert/delete lines, it's no use trying it.  */
   if (!FRAME_LINE_INS_DEL_OK (f))
@@ -5706,10 +5696,6 @@ write_matrix (struct frame *f, bool inhibit_id_p,
     for (int i = first_row; i < last_row; ++i)
       if (MATRIX_ROW_ENABLED_P (f->desired_matrix, i))
 	write_row (f, i, updating_menu_p);
-
-  /* Now just clean up termcap drivers and set cursor, etc.  */
-  if (set_cursor_p)
-    tty_set_cursor ();
 }
 
 /* Do line insertions/deletions on frame F for frame-based redisplay.  */
