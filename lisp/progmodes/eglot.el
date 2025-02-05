@@ -718,8 +718,9 @@ This can be useful when using docker to run a language server.")
       (InlayHint (:position :label) (:kind :textEdits :tooltip :paddingLeft
                                            :paddingRight :data))
       (InlayHintLabelPart (:value) (:tooltip :location :command))
-      (CallHierarchyItem (:name :kind) (:tags :detail :uri :range :selectionRange :data))
-      (TypeHierarchyItem (:name :kind) (:tags :detail :uri :range :selectionRange :data))
+      ;; HACK! fake 'HierarchyItem', only Call* and Type* exist, though same.
+      (HierarchyItem (:name :kind)
+                     (:tags :detail :uri :range :selectionRange :data))
       (CallHierarchyIncomingCall (:from :fromRanges) ())
       (CallHierarchyOutgoingCall (:to :fromRanges) ()))
     "Alist (INTERFACE-NAME . INTERFACE) of known external LSP interfaces.
@@ -4415,8 +4416,10 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
   (eglot--hierarchy-helper "*EGLOT type hierarchy*"
                            :typeHierarchyProvider
                            :textDocument/prepareTypeHierarchy
-                           '((:typeHierarchy/supertypes " ↑ ")
-                             (:typeHierarchy/subtypes " ↓ "))))
+                           `((:typeHierarchy/supertypes
+                              ,(propertize " ↑ " 'help-echo "derives from"))
+                             (:typeHierarchy/subtypes
+                              ,(propertize " ↓ " 'help-echo "base of")))))
 
 (defun eglot-show-call-hierarchy ()
   "Show the type hierarchy for the symbol at point."
@@ -4424,22 +4427,19 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
   (eglot--hierarchy-helper "*EGLOT call hierarchy*"
                            :callHierarchyProvider
                            :textDocument/prepareCallHierarchy
-                           '((:callHierarchy/incomingCalls " ← " :from)
-                             (:callHierarchy/outgoingCalls " → " :to))))
+                           `((:callHierarchy/incomingCalls
+                              ,(propertize " ← " 'help-echo "called by") :from)
+                             (:callHierarchy/outgoingCalls
+                              ,(propertize " → " 'help-echo "calls") :to))))
 
-(defun eglot--hierarchy-helper (name provider preparer methods)
-  (eglot-server-capable-or-lose provider)
-  (let* ((srv (eglot-current-server))
-         (hierarchy (hierarchy-new))
-         (roots (jsonrpc-request
-                srv
-                preparer
-                (eglot--TextDocumentPositionParams))))
+
+(defun eglot--hierarchy-children (methods server)
+  (lambda (node)
     (cl-flet ((node-equal (n1 n2)
-                (eglot--dbind ((TypeHierarchyItem) ((:name name1))
+                (eglot--dbind ((HierarchyItem) ((:name name1))
                                ((:detail detail1)) ((:data data1)))
                     n1
-                  (eglot--dbind ((TypeHierarchyItem) ((:name name2))
+                  (eglot--dbind ((HierarchyItem) ((:name name2))
                                  ((:detail detail2)) ((:data data2)))
                       n2
                     (cond ((and data1 data2) (equal data1 data2))
@@ -4447,57 +4447,71 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
                           (t (equal name1 name2))))))
               (node-origin (n) (get-text-property 0 'eglot--origin
                                                   (plist-get n :name))))
-      (hierarchy-add-trees
+      (cl-loop for (m bullet key) in methods
+               for resp = (ignore-errors (jsonrpc-request server m `(:item ,node)))
+               for resp2 = (if key
+                               (cl-remove-duplicates
+                                (mapcar (lambda (e) (plist-get e key)) resp)
+                                :test #'equal)
+                             resp)
+               for filtered = (cl-remove-if (lambda (n)
+                                              (cl-find n
+                                                       (node-origin node)
+                                                       :test #'node-equal))
+                                            resp2)
+               for adjust
+               = (mapc
+                  (eglot--lambda ((HierarchyItem) name)
+                    (put-text-property 0 1 'eglot--origin (cons node
+                                                                (node-origin node))
+                                       name)
+                    (put-text-property 0 1 'eglot--hierarchy-method m name)
+                    (put-text-property 0 1 'eglot--hierarchy-bullet bullet name))
+                  filtered)
+               append (append adjust nil)))))
+
+(defun eglot--hierarchy-label (node _depth)
+  (eglot--dbind ((HierarchyItem) name uri range) node
+    (insert (propertize
+             (or (get-text-property
+                  0 'eglot--hierarchy-bullet name)
+                 " ∘ ")
+             'face 'shadow))
+    (insert-text-button
+     name
+     :type 'eglot-hierarchy-file-button
+     'action
+     (lambda (_btn)
+       (with-current-buffer (find-file-noselect (eglot-uri-to-path uri))
+         (pop-to-buffer (current-buffer))
+         (xref--goto-char (eglot--lsp-position-to-point
+                           (plist-get range :start))))))))
+
+(defun eglot--hierarchy-helper (name provider preparer methods)
+  (eglot-server-capable-or-lose provider)
+  (let* ((server (eglot-current-server))
+         (hierarchy (hierarchy-new))
+         (roots (jsonrpc-request
+                server
+                preparer
+                (eglot--TextDocumentPositionParams))))
+    (hierarchy-add-trees
        hierarchy
        roots
        nil
-       (lambda (node)
-         (cl-loop for (m _ key) in methods
-                  for resp = (ignore-errors (jsonrpc-request srv m `(:item ,node)))
-                  for resp2 = (if key
-                                  (cl-remove-duplicates
-                                   (mapcar (lambda (e) (plist-get e key)) resp)
-                                   :test #'equal)
-                                resp)
-                  for filtered = (cl-remove-if (lambda (n)
-                                                 (cl-find n
-                                                          (node-origin node)
-                                                          :test #'node-equal))
-                                               resp2)
-                  for adjust
-                  = (mapc
-                     (eglot--lambda ((TypeHierarchyItem) name)
-                       (put-text-property 0 1 'eglot--origin (cons node
-                                                                   (node-origin node))
-                                          name)
-                       (put-text-property 0 1 'eglot--lsp-method m name))
-                     filtered)
-                  append (append adjust nil)))
+       (eglot--hierarchy-children methods server)
        nil t)
-      (pop-to-buffer
-       (hierarchy-tree-display
-        hierarchy
-        (lambda (node _)
-          (eglot--dbind ((TypeHierarchyItem) name uri range) node
-            (insert-text-button
-             (concat
-              (propertize
-               (or (cl-second (assoc (get-text-property
-                                      0 'eglot--lsp-method name)
-                                     methods))
-                   " ∘ ")
-               'face 'shadow)
-              name)
-             :type 'eglot-hierarchy-file-button
-             'action
-             (lambda (_btn)
-               (with-current-buffer (find-file-noselect (eglot-uri-to-path uri))
-                 (pop-to-buffer (current-buffer))
-                 (xref--goto-char (eglot--lsp-position-to-point
-                                   (plist-get range :start))))))))
-        (get-buffer-create name))))))
+    (pop-to-buffer
+     (hierarchy-tree-display
+      hierarchy
+      #'eglot--hierarchy-label
+      (get-buffer-create name)))
+    (eglot-hierarchy-mode)))
 
-
+(define-derived-mode eglot-hierarchy-mode special-mode
+  "" "Eglot mode for viewing hierarchies.
+\\{eglot-hierarchy-mode-map}"
+  :interactive nil)
 
 
 ;;; Hacks
