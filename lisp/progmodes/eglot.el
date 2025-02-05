@@ -4310,84 +4310,84 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
 
 (defun eglot--update-hints-1 (from to)
   "Do most work for `eglot--update-hints', including LSP request."
-  (let* ((buf (current-buffer))
-         (paint-hint
-          (lambda (hint)
-            (eglot--dbind ((InlayHint) position kind label paddingLeft paddingRight)
-                hint
-              (goto-char (eglot--lsp-position-to-point position))
-              (when (or (> (point) to) (< (point) from)) (cl-return))
-              (let* ((left-pad (and paddingLeft
-                                    (not (eq paddingLeft :json-false))
-                                    (not (memq (char-before) '(32 9))) " "))
-                     (right-pad (and paddingRight
-                                     (not (eq paddingRight :json-false))
-                                     (not (memq (char-after) '(32 9))) " "))
-                     (peg-after-p (eql kind 1)))
-                (cl-labels
-                    ((make-ov ()
-                       (if peg-after-p
-                           (make-overlay (point) (1+ (point)) nil t)
-                         (make-overlay (1- (point)) (point) nil nil nil)))
-                     (do-it (label lpad rpad i n)
-                       (let* ((firstp (zerop i))
-                              (tweak-cursor-p (and firstp peg-after-p))
-                              (ov (make-ov))
-                              (text
-                               (if (functionp eglot-tweak-inlay-hint-fn)
-                                   (funcall eglot-tweak-inlay-hint-fn
-                                            label lpad rpad hint ov)
-                                 (concat lpad label rpad))))
-                         (cond
-                          (text
-                           (when (and (cl-plusp (length text))
-                                      tweak-cursor-p)
-                             (put-text-property 0 1 'cursor 1 text))
-                           (overlay-put ov (if peg-after-p 'before-string 'after-string)
-                                        (propertize
-                                         text
-                                         'face (pcase kind
-                                                 (1 'eglot-type-hint-face)
-                                                 (2 'eglot-parameter-hint-face)
-                                                 (_ 'eglot-inlay-hint-face))))
-                           (overlay-put ov 'priority (if peg-after-p i (- n i)))
-                           (overlay-put ov 'eglot--inlay-hint t)
-                           (overlay-put ov 'evaporate t)
-                           (overlay-put ov 'eglot--overlay t))
-                          (t
-                           (delete-overlay ov))))))
-                  (if (stringp label) (do-it label left-pad right-pad 0 1)
-                    (cl-loop
-                     for i from 0 for ldetail across label
-                     do (eglot--dbind ((InlayHintLabelPart) value) ldetail
-                          (do-it value
-                                 (and (zerop i) left-pad)
-                                 (and (= i (1- (length label))) right-pad)
-                                 i (length label)))))))))))
-    (jsonrpc-async-request
-     (eglot--current-server-or-lose)
-     :textDocument/inlayHint
-     (list :textDocument (eglot--TextDocumentIdentifier)
-           :range (list :start (eglot--pos-to-lsp-position from)
-                        :end (eglot--pos-to-lsp-position to)))
-     :success-fn (lambda (hints)
-                   (eglot--when-live-buffer buf
-                     (eglot--widening
-                      ;; Overlays ending right at FROM with an
-                      ;; `after-string' property logically belong to
-                      ;; the (FROM TO) region.  Likewise, such
-                      ;; overlays ending at TO don't logically belong
-                      ;; to it.
-                      (dolist (o (overlays-in (1- from) to))
-                        (when (and (overlay-get o 'eglot--inlay-hint)
-                                   (cond ((eq (overlay-end o) from)
-                                          (overlay-get o 'after-string))
-                                         ((eq (overlay-end o) to)
-                                          (overlay-get o 'before-string))
-                                         (t)))
-                          (delete-overlay o)))
-                      (mapc paint-hint hints))))
-     :deferred 'eglot--update-hints-1)))
+  (let* ((buf (current-buffer)))
+    (cl-flet
+        ((paint-hint (hint)
+           (eglot--dbind ((InlayHint) position kind label paddingLeft paddingRight)
+               hint
+             (goto-char (eglot--lsp-position-to-point position))
+             (when (or (> (point) to) (< (point) from)) (cl-return-from paint-hint))
+             (let* ((left-pad (and paddingLeft
+                                   (not (eq paddingLeft :json-false))
+                                   (not (memq (char-before) '(32 9))) " "))
+                    (right-pad (and paddingRight
+                                    (not (eq paddingRight :json-false))
+                                    (not (memq (char-after) '(32 9))) " "))
+                    (peg-after-p (eql kind 1)))
+               (cl-labels
+                   ((make-ov ()
+                      (if peg-after-p
+                          (make-overlay (point) (1+ (point)) nil t)
+                        (make-overlay (1- (point)) (point) nil nil nil)))
+                    (do-it (label lpad rpad i n)
+                      (let* ((firstp (zerop i))
+                             (tweak-cursor-p (and firstp peg-after-p))
+                             (ov (make-ov))
+                             (text
+                              (if (functionp eglot-tweak-inlay-hint-fn)
+                                  (funcall eglot-tweak-inlay-hint-fn
+                                           label lpad rpad hint ov)
+                                (concat lpad label rpad))))
+                        (cond
+                         (text
+                          (when (and (cl-plusp (length text))
+                                     tweak-cursor-p)
+                            (put-text-property 0 1 'cursor 1 text))
+                          (overlay-put ov (if peg-after-p 'before-string 'after-string)
+                                       (propertize
+                                        text
+                                        'face (pcase kind
+                                                (1 'eglot-type-hint-face)
+                                                (2 'eglot-parameter-hint-face)
+                                                (_ 'eglot-inlay-hint-face))))
+                          (overlay-put ov 'priority (if peg-after-p i (- n i)))
+                          (overlay-put ov 'eglot--inlay-hint t)
+                          (overlay-put ov 'evaporate t)
+                          (overlay-put ov 'eglot--overlay t))
+                         (t
+                          (delete-overlay ov))))))
+                 (if (stringp label) (do-it label left-pad right-pad 0 1)
+                   (cl-loop
+                    for i from 0 for ldetail across label
+                    do (eglot--dbind ((InlayHintLabelPart) value) ldetail
+                         (do-it value
+                                (and (zerop i) left-pad)
+                                (and (= i (1- (length label))) right-pad)
+                                i (length label))))))))))
+      (jsonrpc-async-request
+       (eglot--current-server-or-lose)
+       :textDocument/inlayHint
+       (list :textDocument (eglot--TextDocumentIdentifier)
+             :range (list :start (eglot--pos-to-lsp-position from)
+                          :end (eglot--pos-to-lsp-position to)))
+       :success-fn (lambda (hints)
+                     (eglot--when-live-buffer buf
+                       (eglot--widening
+                        ;; Overlays ending right at FROM with an
+                        ;; `after-string' property logically belong to
+                        ;; the (FROM TO) region.  Likewise, such
+                        ;; overlays ending at TO don't logically belong
+                        ;; to it.
+                        (dolist (o (overlays-in (1- from) to))
+                          (when (and (overlay-get o 'eglot--inlay-hint)
+                                     (cond ((eq (overlay-end o) from)
+                                            (overlay-get o 'after-string))
+                                           ((eq (overlay-end o) to)
+                                            (overlay-get o 'before-string))
+                                           (t)))
+                            (delete-overlay o)))
+                        (mapc #'paint-hint hints))))
+       :deferred 'eglot--update-hints-1))))
 
 (define-minor-mode eglot-inlay-hints-mode
   "Minor mode for annotating buffers with LSP server's inlay hints."
