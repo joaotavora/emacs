@@ -566,7 +566,9 @@ under cursor."
           (const :tag "Decorate color references" :colorProvider)
           (const :tag "Fold regions of buffer" :foldingRangeProvider)
           (const :tag "Execute custom commands" :executeCommandProvider)
-          (const :tag "Inlay hints" :inlayHintProvider)))
+          (const :tag "Inlay hints" :inlayHintProvider)
+          (const :tag "Type hierarchies" :typeHierarchyProvider)
+          (const :tag "Call hierarchies" :callHierarchyProvider)))
 
 (defcustom eglot-advertise-cancellation nil
   "If non-nil, Eglot attemps to inform server of cancelled requests.
@@ -718,7 +720,8 @@ This can be useful when using docker to run a language server.")
       (InlayHint (:position :label) (:kind :textEdits :tooltip :paddingLeft
                                            :paddingRight :data))
       (InlayHintLabelPart (:value) (:tooltip :location :command))
-      ;; HACK! fake 'HierarchyItem', only Call* and Type* exist, though same.
+      ;; HACK! 'HierarchyItem' doesn't exist, only `CallHierarchyItem'
+      ;; and `TypeHierarchyItem'.  But they're the same, so no bother.
       (HierarchyItem (:name :kind)
                      (:tags :detail :uri :range :selectionRange :data))
       (CallHierarchyIncomingCall (:from :fromRanges) ())
@@ -2301,6 +2304,9 @@ If it is activated, also signal textDocument/didOpen."
      :visible (eglot-server-capable :codeActionProvider)]
     ["Quickfix" eglot-code-action-quickfix
      :visible (eglot-server-capable :codeActionProvider)]
+    "--"
+    ["Show type hierarchy" eglot-show-type-hierarchy]
+    ["Show call hierarchy" eglot-show-call-hierarchy]
     "--"))
 
 (easy-menu-define eglot-server-menu nil "Manage server communication"
@@ -4406,12 +4412,13 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
          (remove-overlays nil nil 'eglot--inlay-hint t))))
 
 
-;;; Call hierarchy
-(require 'hierarchy)
+;;; Call and type hierarchies
+(require 'button)
+(require 'tree-widget)
 
-(define-button-type 'eglot-hierarchy-file-button
-  'follow-link t                        ; Click via mouse
-  'face 'default)
+(define-button-type 'eglot--hierarchy-item
+  'follow-link t
+  'face 'font-lock-function-name-face)
 
 (defun eglot--hierarchy-interactive (specs)
   (let ((ans
@@ -4444,7 +4451,6 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
                 ,kind
                 (eglot-project-nickname (eglot--current-server-or-lose)))
         ,feature ,preparer specs))))
-
 
 (eglot--define-hierarchy-command
  eglot-show-type-hierarchy
@@ -4501,71 +4507,97 @@ If nil, Eglot will concatenate LPAD, LABEL and RPAD in this order.")
                                         name))))
      append items)))
 
-(defun eglot--hierarchy-label (node _depth)
+(defvar eglot-hierarchy-label-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map button-map)
+    (define-key map [mouse-3] (eglot--mouse-call
+                               #'eglot-hierarchy-center-on-node))
+    map)
+  "Keymap active in labels Eglot hierarchy buffers.")
+
+(defun eglot--hierarchy-label (node)
   (eglot--dbind ((HierarchyItem) name uri _detail ((:range item-range))) node
-    (insert (propertize
-             (or (get-text-property
-                  0 'eglot--hierarchy-bullet name)
-                 " ∘ ")
-             'face 'shadow))
-    (insert-text-button
-     name
-     :type 'eglot-hierarchy-file-button
-     'help-echo "mouse-1, RET: goto definition, mouse-2: center on item"
-     'action
-     (lambda (_btn)
-       (pop-to-buffer (find-file-noselect (eglot-uri-to-path uri)))
-       (eglot--goto
-        (or
-         (elt
-          (get-text-property 0 'eglot--hierarchy-call-sites name)
-          0)
-         item-range))))))
+    (with-temp-buffer
+      (insert (propertize
+               (or (get-text-property
+                    0 'eglot--hierarchy-bullet name)
+                   " ∘ ")
+               'face 'shadow))
+      (insert-text-button
+       name
+       :type 'eglot--hierarchy-item
+       'eglot--hierarchy-node node
+       'help-echo "mouse-1, RET: goto definition, mouse-3: center on node"
+       'keymap eglot-hierarchy-label-map
+       'action
+       (lambda (_btn)
+         (pop-to-buffer (find-file-noselect (eglot-uri-to-path uri)))
+         (eglot--goto
+          (or
+           (elt
+            (get-text-property 0 'eglot--hierarchy-call-sites name)
+            0)
+           item-range))))
+      (buffer-string))))
 
 (defun eglot--hierarchy-1 (name provider preparer specs)
   (eglot-server-capable-or-lose provider)
   (let* ((server (eglot-current-server))
          (roots (jsonrpc-request
-                server
-                preparer
-                (eglot--TextDocumentPositionParams))))
+                 server
+                 preparer
+                 (eglot--TextDocumentPositionParams))))
     (with-current-buffer (get-buffer-create name)
       (eglot-hierarchy-mode)
-      (setq-local eglot--hierarchy-roots roots
-                  eglot--hierarchy-specs specs
-                  eglot--cached-server server
-                  buffer-read-only t
-                  revert-buffer-function
-                  (lambda (&rest _ignore)
-                    ;; flush cache (else would defeat purpose of revert)
-                    (cl-loop for r across roots
-                             do (eglot--dbind ((HierarchyItem) name) r
-                                  (set-text-properties 0 1 nil name)))
-                    (eglot--hierarchy-2)))
+      (setq-local
+       eglot--hierarchy-roots roots
+       eglot--hierarchy-specs specs
+       eglot--cached-server server
+       buffer-read-only t
+       revert-buffer-function
+       (lambda (&rest _ignore)
+         ;; flush cache, would defeat purpose of a revert
+         (mapc (lambda (r)
+                 (eglot--dbind ((HierarchyItem) name) r
+                   (set-text-properties 0 1 nil name)))
+               eglot--hierarchy-roots)
+         (eglot--hierarchy-2)))
       (eglot--hierarchy-2))))
 
 (defun eglot--hierarchy-2 ()
-  (let ((hierarchy (hierarchy-new)))
-    (hierarchy-add-trees
-     hierarchy
-     eglot--hierarchy-roots
-     nil
-     #'eglot--hierarchy-children
-     nil t)
+  (cl-labels ((expander-for (node)
+                (lambda (_widget)
+                  (mapcar
+                   #'convert
+                   (eglot--hierarchy-children node))))
+              (convert (node)
+                (let ((w (widget-convert
+                          'tree-widget
+                          :tag (eglot--hierarchy-label node)
+                          :expander (expander-for node))))
+                  (widget-put w :empty-icon
+                              (widget-get w :leaf-icon))
+                  w)))
     (let ((inhibit-read-only t))
       (erase-buffer)
-      (widget-create
-       (hierarchy-convert-to-tree-widget hierarchy
-                                         #'eglot--hierarchy-label))
+      (mapc (lambda (r)
+              (widget-create (convert r)))
+            eglot--hierarchy-roots)
       (goto-char (point-min))))
     (pop-to-buffer (current-buffer)))
 
 (define-derived-mode eglot-hierarchy-mode special-mode
-  "" "Eglot mode for viewing hierarchies.
+  "Eglot special" "Eglot mode for viewing hierarchies.
 \\{eglot-hierarchy-mode-map}"
   :interactive nil)
 
-
+(defun eglot-hierarchy-center-on-node ()
+  "Refresh hierarchy, centering on node at point."
+  (interactive)
+  (setq-local eglot--hierarchy-roots
+              (list (get-text-property (point)
+                                 'eglot--hierarchy-node)))
+  (eglot--hierarchy-2))
 
 
 ;;; Hacks
