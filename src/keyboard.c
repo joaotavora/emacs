@@ -8133,8 +8133,15 @@ tty_read_avail_input (struct terminal *terminal,
       buf.code = cbuf[i];
       /* Set the frame corresponding to the active tty.  Note that the
          value of selected_frame is not reliable here, redisplay tends
-         to temporarily change it.  */
-      buf.frame_or_window = tty->top_frame;
+         to temporarily change it.  However, if the selected frame is a
+         child frame, don't do that since it will cause switch frame
+         events to switch to the root frame instead.  */
+      if (FRAME_PARENT_FRAME (XFRAME (selected_frame))
+	  && (root_frame (XFRAME (selected_frame))
+	      == XFRAME (tty->top_frame)))
+	buf.frame_or_window = selected_frame;
+      else
+	buf.frame_or_window = tty->top_frame;
       buf.arg = Qnil;
 
       kbd_buffer_store_event (&buf);
@@ -13965,7 +13972,10 @@ function is called to remap that sequence.  */);
   pdumper_do_now_and_after_load (syms_of_keyboard_for_pdumper);
 
   DEFSYM (Qactivate_mark_hook, "activate-mark-hook");
+#ifdef HAVE_NS
+  DEFSYM (Qns_put_working_text, "ns-put-working-text");
   DEFSYM (Qns_unput_working_text, "ns-unput-working-text");
+#endif
   DEFSYM (Qinternal_timer_start_idle, "internal-timer-start-idle");
   DEFSYM (Qconcat, "concat");
   DEFSYM (Qsuspend_hook, "suspend-hook");
@@ -14014,10 +14024,12 @@ keys_of_keyboard (void)
   initial_define_lispy_key (Vspecial_event_map, "end-session",
 			    "kill-emacs");
 #endif
+#ifdef HAVE_NS
   initial_define_lispy_key (Vspecial_event_map, "ns-put-working-text",
 			    "ns-put-working-text");
   initial_define_lispy_key (Vspecial_event_map, "ns-unput-working-text",
 			    "ns-unput-working-text");
+#endif
   /* Here we used to use `ignore-event' which would simple set prefix-arg to
      current-prefix-arg, as is done in `handle-switch-frame'.
      But `handle-switch-frame is not run from the special-map.

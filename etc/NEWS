@@ -226,6 +226,14 @@ It has been obsolete since Emacs 30.1.  Use '(category . comint)' instead.
 Another user option 'display-tex-shell-buffer-action' has been removed too
 for which you can use '(category . tex-shell)'.
 
++++
+*** New user option 'split-window-preferred-direction'.
+Users can now choose in which direction Emacs tries to split first:
+vertical or horizontal.  With this new setting, when the frame is in
+landscape shape for instance, Emacs could split horizontally before
+splitting vertically.  The default setting preserves Emacs historical
+behavior to try to split vertically first.
+
 ** Frames
 
 +++
@@ -296,6 +304,11 @@ on the header lines are now these two: the selected window uses
 'header-line-active', non-selected windows use 'header-line-inactive'.
 
 ** In 'customize-face', the "Font family" attribute now supports completion.
+
+** 'process-adaptive-read-buffering' is now nil by default.
+Setting this variable to a non-nil value reduces performance and leads
+to wrong results in some cases.  We believe that it is no longer useful;
+please contact us if you still need it for some reason.
 
 
 * Editing Changes in Emacs 31.1
@@ -460,6 +473,13 @@ default), the 'whitespace-cleanup' function will now add the newline.
 ** Bookmark
 
 ---
+*** Bookmark history now saves each bookmark only once.
+Previously, the variable 'bookmark-history' accumulated duplicate
+bookmark names when bookmark features were used interactively.  This
+made their history larger than necessary for frequent bookmark users.
+Bookmark names are now saved uniquely.
+
+---
 *** New user option 'bookmark-bmenu-type-column-width'.
 This user option controls the width of the type column on the bookmark
 menu 'bookmark-bmenu-list'.  The default value is 8 which is backwards
@@ -482,6 +502,15 @@ Or in Elisp:
 If 'save-place-autosave-interval' is nil, auto saving is disabled; this
 is the default.  As before, saved places are scheduled to be saved at
 Emacs exit.
+
+** Savehist
+
+---
+*** Savehist no longer saves additional variables more than once.
+If you configured 'savehist-additional-variables' with variables that
+were also dynamically accumulated in minibuffer history during
+minibuffer use, they are now saved only once in the file specified by
+'savehist-file'.  Previously, they were saved twice.
 
 ** Message
 
@@ -515,6 +544,12 @@ It removes all the buttons in the specified region.
 *** New command to complete the shell history.
 'comint-complete-input-ring' ('C-x <up>') is like 'minibuffer-complete-history'
 but completes on comint inputs.
+
+---
+*** 'ansi-osc-directory-tracker' now respects remote directories.
+Remote directories are now retained when changes to 'default-directory'
+are detected by this filter.  For example, "/ssh:hostname:/home/username"
+would have been stripped to just "/home/username" before.
 
 ** Eshell
 
@@ -1067,6 +1102,12 @@ the directory into which the repository was cloned.
 
 ** Package
 
++++
+*** No longer warn if a package has no footer line.
+package.el no longer warns for packages without a "footer line", which
+is the line that usually appears at the very end of an Emacs Lisp file:
+;;; FILENAME ends here
+
 ---
 *** New optional argument to 'package-autoremove'.
 An optional argument NOCONFIRM has been added to 'package-autoremove'.
@@ -1078,6 +1119,11 @@ removing packages.
 *** New prefix argument for 'package-install-selected-packages'.
 When invoked with a prefix argument, 'package-install-selected-packages'
 will not prompt the user for confirmation before installing packages.
+
+---
+*** 'package-refresh-contents' runs asynchronously.
+Refreshing the package index will no longer block when invoked
+interactively.
 
 ** Xref
 
