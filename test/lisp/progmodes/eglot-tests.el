@@ -1491,6 +1491,61 @@ GUESSED-MAJOR-MODES-SYM are bound to the useful return values of
           (eglot--find-file-noselect "project/foolib.c")
         (should (eq (eglot-current-server) server))))))
 
+(defun eglot--call-with-opam-setup (switch fn)
+  (let* ((vals
+           (cl-loop for l in (split-string (shell-command-to-string
+                                            (format "opam env --switch %s"
+                                                    switch))
+                                           "[;\n]")
+                    when (string-match "\\([A-Z_]+\\)='?\\([^']*\\)'?" l)
+                    collect (cons (match-string 1 l) (match-string 2 l))))
+          (process-environment
+           (cl-loop for e in process-environment
+                    for v = (and (string-match "\\([A-Z_]+\\)=" e)
+                                 (match-string 1 e))
+                    for probe = (cl-find v vals :key #'car :test #'equal)
+                    if probe
+                    collect (format "%s=%s" (car probe) (cdr probe))
+                    else collect e))
+          (path (split-string (cdr (cl-find "PATH" vals :key #'car :test #'equal))
+                              ":"))
+          (exec-path (delete-dups
+                      (append path exec-path))))
+    (funcall fn)))
+
+(cl-defmacro eglot--with-opam-setup ((&optional (switch "5.2.0+flambda2"))
+                                     &body body)
+  (declare (indent 2) (debug t))
+  `(eglot--call-with-opam-setup ,switch (lambda () ,@body)))
+
+(ert-deftest eglot-test-ocaml-basic-diagnostics ()
+  "Test basic diagnostics."
+  (eglot--with-opam-setup ()
+      (unless (executable-find "ocamllsp")
+        (ert-skip "ocamllsp not found"))
+    (eglot--with-fixture
+     `(("diag-project" .
+        (("main.ml" . "
+external globalize_string : string @ local -> string = \"%obj_dup\"\n\
+                                                                   \n\
+let () =                                                           \n\
+  let local_message : string @@ local = \"Hello, World\" in        \n\
+  (* Can't print [local_message] -- the value would escape. *)     \n\
+  let global_message = globalize_string local_message in           \n\
+  (* Copy the string to create a new global value. *)              \n\
+  print_endline global_message                                     \n\
+;;                                                                 \n\
+"))))
+     (with-current-buffer
+         (eglot--find-file-noselect "diag-project/main.ml")
+       (eglot--sniffing (:server-notifications s-notifs)
+         (eglot--tests-connect)
+         (eglot--wait-for (s-notifs 10)
+             (&key _id method &allow-other-keys)
+           (string= method "textDocument/publishDiagnostics")))))))
+
+
+
 (provide 'eglot-tests)
 
 ;; Local Variables:
