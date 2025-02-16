@@ -1792,6 +1792,38 @@ over `treesit-simple-indent-rules'.")
       (back-to-indentation)
       (treesit--indent-largest-node-at (point)))))
 
+(defvar treesit-simple-indent-standalone-predicate nil
+  "Function used to determine if a node is \"standalone\".
+
+\"Standalone\" means the node starts on a new line.  For example, if we
+look at the opening bracket, then it's standalone in this case:
+
+    {            <-- Standalone.
+      return 1;
+    }
+
+but not in this case:
+
+    if (true) {  <-- Not standalone.
+      return 1;
+    }
+
+The value of this variable affects the `standalone-parent' indent preset
+for treesit-simple-indent.  If the value is nil, the standlone condition
+is as described.  Some major mode might want to relax the condition a
+little bit, so that it ignores some punctuation like \".\".  For
+example, a Javascript mode might want to consider the method call below
+to be standalone too:
+
+    obj
+    .method(() => {   <-- Consider \".method\" to be standalone,
+      return 1;       <-- so this line anchors on \".method\".
+    });
+
+The value should be a function that takes a node, and return t if it's
+standalone.  If the function returns a position, that position is used
+as the anchor.")
+
 (defvar treesit-simple-indent-presets
   (list (cons 'match
               (lambda
@@ -1925,16 +1957,23 @@ over `treesit-simple-indent-rules'.")
                               (goto-char (treesit-node-start parent))
                               (back-to-indentation)
                               (point))))
-        (cons 'standalone-parent
-              (lambda (_n parent &rest _)
-                (save-excursion
-                  (catch 'term
-                    (while parent
-                      (goto-char (treesit-node-start parent))
-                      (when (looking-back (rx bol (* whitespace))
-                                          (line-beginning-position))
-                        (throw 'term (point)))
-                      (setq parent (treesit-node-parent parent)))))))
+        (cons
+         'standalone-parent
+         (lambda (_n parent &rest _)
+           (save-excursion
+             (let (anchor)
+               (catch 'term
+                 (while parent
+                   (goto-char (treesit-node-start parent))
+                   (when (if (null treesit-simple-indent-standalone-predicate)
+                             (looking-back (rx bol (* whitespace))
+                                           (line-beginning-position))
+                           (setq anchor
+                                 (funcall
+                                  treesit-simple-indent-standalone-predicate
+                                  parent)))
+                     (throw 'term (if (numberp anchor) anchor (point))))
+                   (setq parent (treesit-node-parent parent))))))))
         (cons 'prev-sibling (lambda (node parent bol &rest _)
                               (treesit-node-start
                                (or (treesit-node-prev-sibling node t)
@@ -2065,7 +2104,10 @@ parent-bol
 standalone-parent
 
     Finds the first ancestor node (parent, grandparent, etc.) that
-    starts on its own line, and returns the start of that node.
+    starts on its own line, and returns the start of that node.  The
+    definition of \"standalone\" can be customized by setting
+    `treesit-simple-indent-standalone-predicate'.  Some major mode might
+    want to do that for easier indentation for method chaining.
 
 prev-sibling
 
@@ -2789,12 +2831,6 @@ friends."
 ;;
 ;; There are also some defun-specific functions, like
 ;; treesit-defun-name, treesit-add-log-current-defun.
-;;
-;; TODO: Integration with thing-at-point: once our thing interface is
-;; stable.
-;;
-;; TODO: Integration with hideshow: I tried and failed, we need
-;; SomeOne that understands hideshow to look at it.
 
 (defvar-local treesit-defun-type-regexp nil
   "A regexp that matches the node type of defun nodes.
@@ -3261,7 +3297,6 @@ function is called recursively."
     ;; Counter equal to 0 means we successfully stepped ARG steps.
     (if (eq counter 0) pos nil)))
 
-;; TODO: In corporate into thing-at-point.
 (defun treesit-thing-at-point (thing tactic)
   "Return the THING at point, or nil if none is found.
 
@@ -3508,7 +3543,7 @@ when a major mode sets it.")
    treesit-simple-imenu-settings))
 
 (defun treesit-outline--at-point ()
-  "Return the outline heading at the current line."
+  "Return the outline heading node at the current line."
   (let* ((pred treesit-outline-predicate)
          (bol (pos-bol))
          (eol (pos-eol))
@@ -3558,8 +3593,7 @@ For BOUND, MOVE, BACKWARD, LOOKING-AT, see the descriptions in
 (defun treesit-outline-level ()
   "Return the depth of the current outline heading."
   (let* ((node (treesit-outline--at-point))
-         (level (if (treesit-node-match-p node treesit-outline-predicate)
-                    1 0)))
+         (level 1))
     (while (setq node (treesit-parent-until node treesit-outline-predicate))
       (setq level (1+ level)))
     (if (zerop level) 1 level)))
