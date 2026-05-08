@@ -5390,31 +5390,16 @@ NOTE: See `markdown-ts--set-up-inline'."
   (setq-local markdown-ts-enable-code-block-context-mode nil)
   (setq-local markdown-ts-enable-table-mode nil)
   (markdown-ts-mode--initialize)
+  (dolist (ov (overlays-in (point-min) (point-max)))
+    (when-let* ((face (overlay-get ov 'face)))
+      (font-lock-append-text-property
+       (overlay-start ov) (overlay-end ov) 'face face)))
+  (delete-all-overlays)
   (setq buffer-read-only t))
 
 (derived-mode-add-parents 'markdown-ts-view-mode '(markdown-ts-mode special-mode))
 
 ;;; Mode utilities:
-
-(defun markdown-ts-render-string (string &optional with-markup)
-  "Return STRING rendered and fontified.
-STRING is text with Markdown markup.
-Use `markdown-ts-view-mode' which hides Markdown markup.  If WITH-MARKUP
-is non-nil, use `markdown-ts-mode' to retain visible markup."
-  (with-work-buffer
-    (markdown-ts--inhibit-messages-and-warnings t
-      (delay-mode-hooks
-        (funcall 'markdown-ts-view-mode))
-      (setq-local markdown-ts-hide-markup (not with-markup))
-      (let ((inhibit-read-only t))
-        (insert string)
-        (font-lock-ensure)
-        ;; Convert overlays to text properties.
-        (dolist (ov (overlays-in (point-min) (point-max)))
-          (when-let* ((face (overlay-get ov 'face)))
-            (font-lock-append-text-property
-             (overlay-start ov) (overlay-end ov) 'face face)))))
-    (string-trim (buffer-string))))
 
 (defun markdown-ts--barf-if-not-mode (&optional context)
   "Signal an error if the current buffer is not a `markdown-ts-mode' buffer.
