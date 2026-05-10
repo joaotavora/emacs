@@ -1851,10 +1851,31 @@ Skip matches already inside tree-sitter link or autolink nodes."
    :language 'markdown-inline
    :override 'append
    :feature 'paragraph-inline
+   '(((strikethrough) @markdown-ts-strikethrough))
+   ;; ;; Order matters: most specific to least specific.
+   ;; '(;; ~ x ~ (strikethrough (emphasis_delimiter) ) : ( (emphasis_delimiter))
+   ;;   ;;                                           ^^^
+   ;;   ;;                                           inline text needs to be ignored
+   ;;   ((strikethrough ((emphasis_delimiter)
+   ;;                    :anchor
+   ;;                    _ @foo
+   ;;                    (emphasis_delimiter))
+   ;;                   (:match "\\`[~[:print:]]\\'" @foo)
+   ;;                   )
+   ;;    @default)
+   ;;   ;; ~~x~~ (strikethrough (emphasis_delimiter) (strikethrough (emphasis_delimiter) (emphasis_delimiter)) (emphasis_delimiter))
+   ;;   ((strikethrough (emphasis_delimiter) (strikethrough (emphasis_delimiter) (emphasis_delimiter)) (emphasis_delimiter))
+   ;;    @markdown-ts-strikethrough)
+   ;;   ;;  ~x~  (strikethrough (emphasis_delimiter) (emphasis_delimiter))
+   ;;   ((strikethrough (emphasis_delimiter) (emphasis_delimiter))
+   ;;    @markdown-ts-strikethrough))
+
+   :language 'markdown-inline
+   :override 'append
+   :feature 'paragraph-inline
    '(((link_destination) @markdown-ts--fontify-link-destination)
      ((emphasis) @markdown-ts-emphasis)
      ((strong_emphasis) @markdown-ts-bold)
-     ((strikethrough) @markdown-ts-strikethrough)
      (inline_link (link_text) @markdown-ts--fontify-link-node)
      (full_reference_link (link_text) @markdown-ts--fontify-link-node)
      (full_reference_link (link_label) @markdown-ts--fontify-link-node)
@@ -4746,15 +4767,16 @@ If point is not at a table, do nothing."
   "Return range settings for `markdown-ts-mode'."
   (apply
    #'treesit-range-rules
-   `(:embed markdown-inline
-     :host markdown
+   `( :embed markdown-inline
+      :host markdown
+      :local t
      ((inline) @markdown-inline)
      ,@(when markdown-ts-fontify-code-blocks-natively
-         '(:embed markdown-ts--code-block-ts-language
-           :host markdown
-           :local t
-           ((fenced_code_block (info_string (language) @language)
-                               (code_fence_content) @content)))))))
+         '( :embed markdown-ts--code-block-ts-language
+            :host markdown
+            :local t
+            ((fenced_code_block (info_string (language) @language)
+                                (code_fence_content) @content)))))))
 
 (defun markdown-ts--remove-image-overlays ()
   "Remove all inline image overlays from the current buffer."
@@ -5183,7 +5205,7 @@ NOTE: Call this function only when the treesit `markdown' and
   (setq-local adaptive-fill-function #'markdown-ts--adaptive-fill)
 
   ;; Create and configure the parsers.
-  (treesit-parser-create 'markdown-inline)
+  ;; +++ (treesit-parser-create 'markdown-inline)
   (setq treesit-primary-parser
         (treesit-parser-create 'markdown))
 
@@ -5195,11 +5217,12 @@ NOTE: Call this function only when the treesit `markdown' and
                                                (image-preview error)))
 
   (cond (markdown-ts--set-up-inline
-          (setq-local treesit-range-settings
-                      (treesit-range-rules
-                       :embed 'markdown-inline
-                       :host 'markdown
-                       '((inline) @markdown-inline))))
+         (treesit-parser-create 'markdown-inline)
+         (setq-local treesit-range-settings
+                     (treesit-range-rules
+                      :embed 'markdown-inline
+                      :host 'markdown
+                      '((inline) @markdown-inline))))
         (t
          ;; Range settings differ in the master buffer vs. inline above.
          (setq-local treesit-range-settings (markdown-ts--range-settings))
@@ -5390,6 +5413,7 @@ NOTE: See `markdown-ts--set-up-inline'."
   (setq-local markdown-ts-enable-code-block-context-mode nil)
   (setq-local markdown-ts-enable-table-mode nil)
   (markdown-ts-mode--initialize)
+  ;; Convert overlays to text properties.
   (dolist (ov (overlays-in (point-min) (point-max)))
     (when-let* ((face (overlay-get ov 'face)))
       (font-lock-append-text-property
@@ -5400,6 +5424,26 @@ NOTE: See `markdown-ts--set-up-inline'."
 (derived-mode-add-parents 'markdown-ts-view-mode '(markdown-ts-mode special-mode))
 
 ;;; Mode utilities:
+
+(defun markdown-ts-render-string (string &optional with-markup)
+  "Return STRING rendered and fontified.
+STRING is text with Markdown markup.
+Use `markdown-ts-view-mode' which hides Markdown markup.  If WITH-MARKUP
+is non-nil, use `markdown-ts-mode' to retain visible markup."
+  (with-work-buffer
+    (markdown-ts--inhibit-messages-and-warnings t
+      (delay-mode-hooks
+        (funcall 'markdown-ts-view-mode))
+      (setq-local markdown-ts-hide-markup (not with-markup))
+      (let ((inhibit-read-only t))
+        (insert string)
+        (font-lock-ensure)
+        ;; Convert overlays to text properties.
+        (dolist (ov (overlays-in (point-min) (point-max)))
+          (when-let* ((face (overlay-get ov 'face)))
+            (font-lock-append-text-property
+             (overlay-start ov) (overlay-end ov) 'face face)))))
+    (string-trim (buffer-string))))
 
 (defun markdown-ts--barf-if-not-mode (&optional context)
   "Signal an error if the current buffer is not a `markdown-ts-mode' buffer.
