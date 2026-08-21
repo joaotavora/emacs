@@ -405,8 +405,7 @@ Interactively, BACKEND is chosen to be the first backend in
 ;;;
 ;; Kinds are symbols in a hierarchy, so that asking for `refactor' also
 ;; offers extractions, and so that a backend can register a kind nobody
-;; anticipated under whichever known kind it most resembles.  FIXME: not
-;; sure this is useful.
+;; anticipated under whichever known kind it most resembles.
 
 (defvar refactor-kinds nil
   "List of all refactoring kinds defined so far, in definition order.")
@@ -423,10 +422,6 @@ top-level kind.  DOCSTRING describes NAME to the user."
      (setq refactor-kinds (nreverse refactor-kinds))
      ',name))
 
-(defun refactor-kind-documentation (kind)
-  "Return the docstring describing KIND, or nil."
-  (get kind 'refactor-kind-documentation))
-
 (defun refactor-kind-matches-p (kind filter)
   "Return non-nil if KIND is FILTER or one of its sub-kinds.
 A nil FILTER matches everything."
@@ -434,32 +429,15 @@ A nil FILTER matches everything."
       (cl-loop for k = kind then (get k 'refactor-kind-parent)
                while k thereis (eq k filter))))
 
-(refactor-defkind quickfix nil
-  "Fix a problem reported at point.")
-
-(refactor-defkind refactor nil
-  "Change code without changing what it does.")
-
-(refactor-defkind extract refactor
-  "Extract code into a new named entity.")
-
-(refactor-defkind inline refactor
-  "Inline a named entity into the places that use it.")
-
-(refactor-defkind rewrite refactor
-  "Restate code in a different form.")
-
-(refactor-defkind move refactor
-  "Move an entity somewhere else.")
-
-(refactor-defkind source nil
-  "Act on the whole file rather than on a selection.")
-
-(refactor-defkind organize-imports source
-  "Tidy up the file's import declarations.")
-
-(refactor-defkind fix-all source
-  "Apply every fix available in the file.")
+(refactor-defkind quickfix nil "Fix a problem reported at point.")
+(refactor-defkind refactor nil "Change code without changing what it does.")
+(refactor-defkind extract refactor "Extract code into a new named entity.")
+(refactor-defkind inline refactor "Inline named entity into the call sites.")
+(refactor-defkind rewrite refactor "Restate code in a different form.")
+(refactor-defkind move refactor "Move an entity somewhere else.")
+(refactor-defkind source nil "Act on the a file rather than on a selection.")
+(refactor-defkind organize-imports source "Tidy up import declarations.")
+(refactor-defkind fix-all source "Apply every fix available in the file.")
 
 (cl-defgeneric refactor-operation-kind (operation)
   "Return a symbol classifying OPERATION.
@@ -486,7 +464,7 @@ symbols `refactor-confirmation' matches against."
   (:method ((op refactor-file-deletion))
    (format "Delete `%s'" (oref op file))))
 
-;;;; Applying edits to a buffer
+;;;; Applying changes
 
 (cl-defun refactor-apply-text-edits (edits &key silent)
   "Apply EDITS to the current buffer as a single undo step.
