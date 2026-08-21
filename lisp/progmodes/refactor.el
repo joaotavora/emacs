@@ -79,8 +79,9 @@ collect the non-nil backends they return."
   (let (retval)
     (run-hook-wrapped 'refactor-backend-functions
                       (lambda (a)
-                        (when-let* ((x (funcall a))) (push x retval))))
-    retval))
+                        (when-let* ((x (funcall a))) (push x retval))
+                        nil))
+    (reverse retval)))
 
 (cl-defgeneric refactor-backend-name (backend)
   "Return a short human-readable name for BACKEND."
@@ -413,7 +414,6 @@ A nil FILTER matches everything."
 
 (defclass refactor-operation ()
   ((description :initarg :description :initform nil
-                :accessor refactor-operation-description
                 :documentation "\
 Overrides the description this operation would otherwise give of
 itself in prompts and summaries."))
@@ -421,9 +421,9 @@ itself in prompts and summaries."))
   :abstract t)
 
 (defclass refactor-file-edit (refactor-operation)
-  ((file :initarg :file :initform nil :accessor refactor-file-edit-file
+  ((file :initarg :file :initform nil
          :documentation "Absolute name of the file to change.")
-   (edits :initarg :edits :initform nil :accessor refactor-file-edit-edits
+   (edits :initarg :edits :initform nil
           :documentation "\
 Either a list of (BEG END NEWTEXT), where BEG and END are integer
 positions valid in the widened buffer visiting the file, or a
@@ -432,36 +432,31 @@ buffer current.  Edits must not overlap."))
   :documentation "An operation changing the text of a single file.")
 
 (defclass refactor-file-creation (refactor-operation)
-  ((file :initarg :file :initform nil :accessor refactor-file-creation-file
+  ((file :initarg :file :initform nil
          :documentation "Absolute name of the file to create.")
    (contents :initarg :contents :initform nil
-             :accessor refactor-file-creation-contents
              :documentation "Initial contents, or nil for an empty file.")
    (if-exists :initarg :if-exists :initform 'error
-              :accessor refactor-file-creation-if-exists
               :documentation "\
 What to do when the file already exists: `error', `skip' or `overwrite'."))
   :documentation "An operation creating a file.")
 
 (defclass refactor-file-renaming (refactor-operation)
-  ((from :initarg :from :initform nil :accessor refactor-file-renaming-from
+  ((from :initarg :from :initform nil
          :documentation "Absolute name of the file to rename.")
-   (to :initarg :to :initform nil :accessor refactor-file-renaming-to
+   (to :initarg :to :initform nil
        :documentation "Absolute name to rename it to.")
    (if-exists :initarg :if-exists :initform 'error
-              :accessor refactor-file-renaming-if-exists
               :documentation "\
 What to do when the new name is taken: `error', `skip' or `overwrite'."))
   :documentation "An operation renaming a file.")
 
 (defclass refactor-file-deletion (refactor-operation)
-  ((file :initarg :file :initform nil :accessor refactor-file-deletion-file
+  ((file :initarg :file :initform nil
          :documentation "Absolute name of the file to delete.")
    (recursive :initarg :recursive :initform nil
-              :accessor refactor-file-deletion-recursive
               :documentation "Non-nil to delete a directory's contents too.")
    (if-missing :initarg :if-missing :initform 'error
-               :accessor refactor-file-deletion-if-missing
                :documentation "\
 What to do when the file does not exist: `error' or `skip'."))
   :documentation "An operation deleting a file.")
@@ -478,33 +473,22 @@ symbols `refactor-confirmation' matches against."
 (cl-defgeneric refactor--describe (operation)
   "Return a one-line description of OPERATION."
   (:method ((op refactor-file-edit))
-   (let ((edits (refactor-file-edit-edits op)))
+   (with-slots (file edits) op
      (if (functionp edits)
-         (format "Change `%s'" (refactor-file-edit-file op))
-       (format "Change `%s' (%d change%s)" (refactor-file-edit-file op)
+         (format "Change `%s'" file)
+       (format "Change `%s' (%d change%s)" file
                (length edits) (if (cdr edits) "s" "")))))
   (:method ((op refactor-file-creation))
-   (format "Create `%s'" (refactor-file-creation-file op)))
+   (format "Create `%s'" (oref op file)))
   (:method ((op refactor-file-renaming))
-   (format "Rename `%s' to `%s'" (refactor-file-renaming-from op)
-           (refactor-file-renaming-to op)))
+   (with-slots (from to) op
+     (format "Rename `%s' to `%s'" from to)))
   (:method ((op refactor-file-deletion))
-   (format "Delete `%s'" (refactor-file-deletion-file op))))
+   (format "Delete `%s'" (oref op file))))
 
 (defun refactor-operation-summary (operation)
   "Return the description of OPERATION to show the user."
-  (or (refactor-operation-description operation)
-      (refactor--describe operation)))
-
-(defun refactor-operation-file (operation)
-  "Return the file OPERATION acts on, or nil.
-For a renaming, this is the file as it is named now."
-  (cl-typecase operation
-    (refactor-file-edit (refactor-file-edit-file operation))
-    (refactor-file-creation (refactor-file-creation-file operation))
-    (refactor-file-renaming (refactor-file-renaming-from operation))
-    (refactor-file-deletion (refactor-file-deletion-file operation))))
-
+  (or (oref operation description) (refactor--describe operation)))
 
 ;;;; Applying edits to a buffer
 
@@ -636,42 +620,39 @@ obsolete command; use %S instead."
 (cl-defgeneric refactor--apply-operation (operation)
   "Carry OPERATION out."
   (:method ((op refactor-file-edit))
-   (with-current-buffer (find-file-noselect (refactor-file-edit-file op))
-     (refactor-apply-text-edits (refactor-file-edit-edits op))))
+   (with-slots (file edits) op
+     (with-current-buffer (find-file-noselect file)
+       (refactor-apply-text-edits edits))))
   (:method ((op refactor-file-creation))
-   (let* ((path (refactor-file-creation-file op))
-          (if-exists (refactor-file-creation-if-exists op))
-          (exists (file-exists-p path)))
-     (when (and exists (eq if-exists 'error))
-       (error "File %s already exists" path))
-     (when (or (not exists) (eq if-exists 'overwrite))
-       (let ((dir (file-name-directory path)))
-         (unless (file-directory-p dir) (make-directory dir t)))
-       (write-region (or (refactor-file-creation-contents op) "")
-                     nil path nil 'nomessage))))
+   (with-slots (file contents if-exists) op
+     (let ((exists (file-exists-p file)))
+       (when (and exists (eq if-exists 'error))
+         (error "File %s already exists" file))
+       (when (or (not exists) (eq if-exists 'overwrite))
+         (let ((dir (file-name-directory file)))
+           (unless (file-directory-p dir) (make-directory dir t)))
+         (write-region (or contents "") nil file nil 'nomessage)))))
   (:method ((op refactor-file-renaming))
-   (let* ((old (refactor-file-renaming-from op))
-          (new (refactor-file-renaming-to op))
-          (if-exists (refactor-file-renaming-if-exists op))
-          (new-exists (file-exists-p new)))
-     (when (and new-exists (eq if-exists 'error))
-       (error "File %s already exists" new))
-     (unless (and new-exists (eq if-exists 'skip))
-       (let ((dir (file-name-directory new)))
-         (unless (file-directory-p dir) (make-directory dir t)))
-       ;; If the old file is visited, rename the buffer too
-       (when-let* ((buf (find-buffer-visiting old)))
-         (with-current-buffer buf (set-visited-file-name new t t)))
-       (rename-file old new (eq if-exists 'overwrite)))))
+   (with-slots (from to if-exists) op
+     (let ((new-exists (file-exists-p to)))
+       (when (and new-exists (eq if-exists 'error))
+         (error "File %s already exists" to))
+       (unless (and new-exists (eq if-exists 'skip))
+         (let ((dir (file-name-directory to)))
+           (unless (file-directory-p dir) (make-directory dir t)))
+         ;; If the old file is visited, rename the buffer too
+         (when-let* ((buf (find-buffer-visiting from)))
+           (with-current-buffer buf (set-visited-file-name to t t)))
+         (rename-file from to (eq if-exists 'overwrite))))))
   (:method ((op refactor-file-deletion))
-   (let* ((path (refactor-file-deletion-file op))
-          (exists (file-exists-p path)))
-     (when (and (not exists) (eq (refactor-file-deletion-if-missing op) 'error))
-       (error "File %s does not exist" path))
-     (when exists
-       ;; Kill the buffer if the file is visited
-       (when-let* ((buf (find-buffer-visiting path))) (kill-buffer buf))
-       (delete-file path (refactor-file-deletion-recursive op))))))
+   (with-slots (file recursive if-missing) op
+     (let ((exists (file-exists-p file)))
+       (when (and (not exists) (eq if-missing 'error))
+         (error "File %s does not exist" file))
+       (when exists
+         ;; Kill the buffer if the file is visited
+         (when-let* ((buf (find-buffer-visiting file))) (kill-buffer buf))
+         (delete-file file recursive))))))
 
 (defun refactor--apply-and-report (operation)
   "Carry OPERATION out and say so in the echo area."
@@ -706,12 +687,12 @@ apply with \\<diff-mode-map>\\[diff-apply-buffer]."
       (dolist (op operations)
         (with-temp-buffer
           (let* ((diff (current-buffer))
-                 (path (refactor-file-edit-file op))
+                 (path (oref op file))
                  (existing-buf (find-buffer-visiting path))
                  (existing-buf-label (prin1-to-string existing-buf)))
             (with-temp-buffer
               (refactor--file-text path)
-              (refactor-apply-text-edits (refactor-file-edit-edits op)
+              (refactor-apply-text-edits (oref op edits)
                                          :silent t)
               (diff-no-select (or existing-buf path) (current-buffer) nil t diff)
               (when existing-buf
@@ -757,8 +738,7 @@ applied and, if not, why not."
            (all-edits (cl-every #'refactor-file-edit-p operations))
            (peaceful (and all-edits
                           (cl-every (lambda (op)
-                                      (find-buffer-visiting
-                                       (refactor-file-edit-file op)))
+                                      (find-buffer-visiting (oref op file)))
                                     operations))))
       (cond
        ((and (memq decision '(maybe-diff maybe-summary)) peaceful)
@@ -791,8 +771,7 @@ applied and, if not, why not."
                           ;; the user skipped the create operation).
                           (cl-loop for op = (pop remaining) while op
                                    when (or (not (refactor-file-edit-p op))
-                                            (file-exists-p
-                                             (refactor-file-edit-file op)))
+                                            (file-exists-p (oref op file)))
                                    return op))
                         '("change" "changes" "apply"))
                        (if (= applied total)
