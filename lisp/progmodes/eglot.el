@@ -2441,7 +2441,7 @@ the previous reports for TOKEN.")
     (unless (eglot--stay-out-of-p 'xref)
       (add-hook 'xref-backend-functions #'eglot-xref-backend nil t))
     (unless (eglot--stay-out-of-p 'refactor)
-      (cl-pushnew 'eglot refactor-backends))
+      (add-hook 'refactor-backend-functions #'eglot-refactor-backend nil t))
     (add-hook 'completion-at-point-functions #'eglot-completion-at-point nil t)
     (add-hook 'completion-in-region-mode-hook #'eglot--capf-session-flush nil t)
     (add-hook 'company-after-completion-hook #'eglot--capf-session-flush nil t)
@@ -2484,7 +2484,7 @@ the previous reports for TOKEN.")
     (remove-hook 'after-save-hook #'eglot--signal-textDocument/didSave t)
     (unless (eglot--stay-out-of-p 'xref)
       (remove-hook 'xref-backend-functions #'eglot-xref-backend t))
-    (setq refactor-backends (delq 'eglot refactor-backends))
+    (remove-hook 'refactor-backend-functions #'eglot-refactor-backend t)
     (remove-hook 'completion-at-point-functions #'eglot-completion-at-point t)
     (remove-hook 'completion-in-region-mode-hook #'eglot--capf-session-flush t)
     (remove-hook 'company-after-completion-hook #'eglot--capf-session-flush t)
@@ -3643,6 +3643,9 @@ If KEEP, knowingly push a dummy do-nothing update."
 ;;; Xref integration
 (defun eglot-xref-backend () "Eglot xref backend." 'eglot)
 
+;;; Refactor integration
+(defun eglot-refactor-backend () "Eglot refactor backend." 'eglot)
+
 (defvar eglot--temp-location-buffers (make-hash-table :test #'equal)
   "Helper variable for `eglot--collecting-xrefs'.")
 
@@ -4456,23 +4459,6 @@ the edit was attempted and optionally why not."
                   (buffer-substring-no-properties (car region) (cdr region))))))
         (t (thing-at-point 'symbol t))))
 
-(cl-defun eglot--rename-interactive (&aux def)
-  (setq def (eglot--rename-default))
-  (when (null def) (user-error "[eglot] Can't rename here"))
-  (list (read-from-minibuffer
-         (format "Rename `%s' to: " (or def "unknown symbol"))
-         nil nil nil nil def)))
-
-(defun eglot-rename (newname)
-  "Rename the current symbol to NEWNAME."
-  (interactive (eglot--rename-interactive))
-  (let ((server (eglot--current-server-or-lose)))
-    (eglot--apply-workspace-edit
-     server
-     (eglot--request server :textDocument/rename `(,@(eglot--TextDocumentPositionParams)
-                                                   :newName ,newname))
-     this-command)))
-
 (defun eglot--code-action-bounds ()
   "Calculate appropriate bounds depending on region and point."
   (let (diags boftap)
@@ -4581,26 +4567,7 @@ Register it first if it is one Eglot has never seen."
      (eglot--request server :textDocument/rename
                      `(,@(eglot--TextDocumentPositionParams)
                        :newName ,newname)))))
-(defun eglot-code-actions (beg &optional end action-kind interactive)
-  "Find code actions of type ACTION-KIND between BEG and END.
-This function is obsolete; use `refactor' instead.  ACTION-KIND is
-either an LSP kind string, for backwards compatibility, or a
-`refactor' kind symbol."
-  (interactive
-   `(,@(eglot--code-action-bounds)
-     ,(and current-prefix-arg
-           (completing-read "[eglot] Action kind: "
-                            '("quickfix" "refactor.extract" "refactor.inline"
-                              "refactor.rewrite" "source.organizeImports")))
-     t))
-  (refactor beg end
-            (cond ((symbolp action-kind) action-kind)
-                  (action-kind
-                   (car (rassoc action-kind eglot--refactor-kinds))))
-            interactive))
-
-(make-obsolete 'eglot-code-actions 'refactor "32.1")
-
+(define-obsolete-function-alias 'eglot-code-actions 'refactor "32.1")
 (define-obsolete-function-alias 'eglot-rename 'refactor-rename "32.1")
 (define-obsolete-function-alias 'eglot-code-action-organize-imports
   'refactor-organize-imports "32.1")

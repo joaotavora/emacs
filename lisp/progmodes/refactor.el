@@ -75,8 +75,11 @@ decide lazily whether it applies, and matches the Xref precedent.")
   "Return the refactor backends applicable in the current context.
 Run every function on `refactor-backend-functions' in turn and
 collect the non-nil backends they return."
-  (cl-loop for finder in refactor-backend-functions
-           when (funcall finder) collect it))
+  (let (retval)
+    (run-hook-wrapped 'refactor-backend-functions
+                      (lambda (a)
+                        (when-let* ((x (funcall a))) (push x retval))))
+    retval))
 
 (cl-defgeneric refactor-backend-name (backend)
   "Return a short human-readable name for BACKEND."
