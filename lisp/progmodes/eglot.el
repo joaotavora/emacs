@@ -45,12 +45,14 @@
 ;; * Eglot's main job is to hook up the information that language
 ;;   servers offer via LSP to Emacs's UI facilities: Xref for
 ;;   definition-chasing, Flymake for diagnostics, Eldoc for at-point
-;;   documentation, etc.  Eglot's job is generally *not* to provide
-;;   such a UI itself, though a small number of simple
-;;   counter-examples do exist, e.g. in the `eglot-rename' command or
-;;   the `eglot-inlay-hints-mode' minor mode.  When a new UI is
-;;   evidently needed, consider adding a new package to Emacs, or
-;;   extending an existing one.
+;;   documentation, Refactor for code action collection and execution,
+;;   etc.  Eglot's job is generally *not* to provide such a UI itself,
+;;   though a fair number of simple counter-examples do exist, e.g. in
+;;   the `eglot-inlay-hints-mode' and `eglot-semantic-tokens-mode' minor
+;;   modes, and the `eglot-show-call-hierarchy' and
+;;   `eglot-show-type-hierarchy' commands.  When a new UI is evidently
+;;   needed, consider adding a new package to Emacs, or extending an
+;;   existing one.
 ;;
 ;; * Eglot was designed to function with just the UI facilities found
 ;;   in the latest Emacs core, as long as those facilities are also
@@ -605,54 +607,14 @@ servers."
   :type 'boolean
   :package-version '(Eglot . "1.22"))
 
-(defface eglot-code-action-indicator-face
-  '((t (:inherit warning :weight bold)))
-  "Face used for code action suggestions.")
-
-(defcustom eglot-code-action-indications
-  '(eldoc-hint left-fringe margin)
-  "How Eglot indicates there's are code actions available at point.
-Value is a list of symbols, more than one can be specified:
-
-- `eldoc-hint': ElDoc is used to hint about at-point actions;
-- `left-fringe': A special indicator appears on the left fringe;
-- `margin': A special indicator appears in the margin;
-- `nearby': A special indicator appears near point;
-- `mode-line': A special indicator appears in the mode-line.
-
-If the list is empty, Eglot will not hint about code actions at point.
-
-Note additionally:
-
-- Some values are incompatible; if one or more of `nearby',
-  `left-fringe' and `margin' are specified, earlier values take
-  precedence.
-- The indicators for many of these are customizable via
- `eglot-code-action-indicator' (which see), except for `left-fringe'.
-- `mode-line' only works if `eglot-mode-line-action-suggestion' exists
-  in `eglot-mode-line-format' (which see)."
-  :type '(set
-          :tag "Tick the ones you're interested in"
-          (const :tag "ElDoc textual hint" eldoc-hint)
-          (const :tag "Right besides point" nearby)
-          (const :tag "In mode line" mode-line)
-          (const :tag "In left fringe" left-fringe)
-          (const :tag "In margin" margin))
-  :package-version '(Eglot . "1.19"))
-
-(defcustom eglot-code-action-indicator
-  (cl-loop for c in '(?↯ ?⭍ ?✓ ?α ??)
-           when (char-displayable-p c)
-           return (make-string 1 c))
-  "Indicator string for code action suggestions."
-  :type (let ((basic-choices
-               (cl-loop for c in '(?↯ ?⭍ ?✓ ?α ??)
-                        when (char-displayable-p c)
-                        collect `(const :tag ,(format "Use `%c'" c)
-                                        ,(make-string 1 c)))))
-          `(choice ,@basic-choices
-                   (string :tag "Specify your own")))
-  :package-version '(Eglot . "1.19"))
+(define-obsolete-variable-alias 'eglot-code-action-indications
+  'refactor-indications "32.1")
+(define-obsolete-variable-alias 'eglot-code-action-indicator
+  'refactor-indicator "32.1")
+(define-obsolete-face-alias 'eglot-code-action-indicator-face
+  'refactor-indicator-face "32.1")
+(define-obsolete-variable-alias 'eglot-diagnostics-map
+  'refactor-suggestion-mode-map "32.1")
 
 (defvar eglot-withhold-process-id nil
   "If non-nil, Eglot will not send the Emacs process id to the language server.
@@ -2411,9 +2373,6 @@ source of a partial report.  VERSION is the LSP Document version
 reported for diagnostics in MAP.  PREV-MAP contains the diagnostics of
 the previous reports for TOKEN.")
 
-(defvar-local eglot--suggestion-overlay (make-overlay 0 0)
-  "Overlay for `eglot-code-action-suggestion'.")
-
 (define-minor-mode eglot--managed-mode
   "Mode for source buffers managed by some Eglot project."
   :init-value nil :lighter nil :keymap eglot-mode-map :interactive nil
@@ -2463,7 +2422,7 @@ the previous reports for TOKEN.")
       (dolist (f (list #'eglot-signature-eldoc-function
                        #'eglot-hover-eldoc-function
                        #'eglot-highlight-eldoc-function
-                       #'eglot-code-action-suggestion))
+                       #'refactor-suggestion))
         (add-hook 'eldoc-documentation-functions f t t))
       (eldoc-mode 1))
     (cl-pushnew (current-buffer) (eglot--managed-buffers (eglot-current-server))))
@@ -2484,7 +2443,8 @@ the previous reports for TOKEN.")
     (remove-hook 'after-save-hook #'eglot--signal-textDocument/didSave t)
     (unless (eglot--stay-out-of-p 'xref)
       (remove-hook 'xref-backend-functions #'eglot-xref-backend t))
-    (remove-hook 'refactor-backend-functions #'eglot-refactor-backend t)
+    (unless (eglot--stay-out-of-p 'refactor)
+      (remove-hook 'refactor-backend-functions #'eglot-refactor-backend t))
     (remove-hook 'completion-at-point-functions #'eglot-completion-at-point t)
     (remove-hook 'completion-in-region-mode-hook #'eglot--capf-session-flush t)
     (remove-hook 'company-after-completion-hook #'eglot--capf-session-flush t)
@@ -2495,7 +2455,7 @@ the previous reports for TOKEN.")
       (dolist (f (list #'eglot-hover-eldoc-function
                        #'eglot-signature-eldoc-function
                        #'eglot-highlight-eldoc-function
-                       #'eglot-code-action-suggestion))
+                       #'refactor-suggestion))
         (remove-hook 'eldoc-documentation-functions f t)))
     (cl-loop for (var . saved-binding) in eglot--saved-bindings
              do (set (make-local-variable var) saved-binding))
@@ -2803,14 +2763,7 @@ still unanswered LSP requests to the server\n"))))
   "Eglot mode line construct for LSP progress reports.")
 
 (defconst eglot-mode-line-action-suggestion
-  '(:eval
-    (when (and (memq 'mode-line eglot-code-action-indications)
-               (overlay-buffer eglot--suggestion-overlay))
-      (eglot--mode-line-props
-       eglot-code-action-indicator 'eglot-code-action-indicator-face
-       `((mouse-1
-          eglot-code-actions-at-mouse
-          "execute code actions at point")))))
+  refactor-mode-line-indicator
   "Eglot mode line construct for at-point code actions.")
 
 (add-to-list
@@ -3338,19 +3291,12 @@ uses it; didOpen then clears it and recomputes from the new
 (put 'eglot-warning 'flymake-category 'flymake-warning)
 (put 'eglot-error 'flymake-category 'flymake-error)
 
-(defvar eglot-diagnostics-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map [mouse-2] #'eglot-code-actions-at-mouse)
-    (define-key map [left-margin mouse-1] #'eglot-code-actions-at-mouse)
-    map)
-  "Keymap active in Eglot-backed Flymake diagnostic overlays.")
-
 (cl-loop for i from 1
          for type in '(eglot-note eglot-warning eglot-error)
          do (put type 'flymake-overlay-control
                  `((mouse-face . highlight)
                    (priority . ,(+ 50 i))
-                   (keymap . ,eglot-diagnostics-map))))
+                   (keymap . ,refactor-suggestion-mode-map))))
 
 (defun eglot--flymake-sniff-diagnostics (beg &optional end)
   "Like `flymake-diagnostics', but for Eglot-specific diagnostics."
@@ -4447,37 +4393,6 @@ the edit was attempted and optionally why not."
   (refactor-apply-changeset (eglot--translate-workspace-edit wedit)
                             :origin origin))
 
-(cl-defun eglot--rename-bounds
-    (&aux region
-          (rename-support (eglot-server-capable-or-lose :renameProvider))
-          (prepare-support (and (listp rename-support)
-                                (plist-get rename-support :prepareProvider))))
-  (cond (prepare-support
-         (let ((x (eglot--request (eglot--current-server-or-lose)
-                                  :textDocument/prepareRename
-                                  (eglot--TextDocumentPositionParams))))
-           (cond ((null x) nil)
-                 ((setq region (and (plist-get x :start)
-                                    (plist-get x :end)
-                                    (eglot-range-region x)))
-                  region)
-                 (t (bounds-of-thing-at-point 'symbol)))))
-        (t (bounds-of-thing-at-point 'symbol))))
-
-(defun eglot--code-action-bounds ()
-  "Calculate appropriate bounds depending on region and point."
-  (let (diags boftap)
-    (cond ((use-region-p) `(,(region-beginning) ,(region-end)))
-          ((setq diags (eglot--flymake-sniff-diagnostics (point)))
-           (cl-loop for d in diags
-                    minimizing (flymake-diagnostic-beg d) into beg
-                    maximizing (flymake-diagnostic-end d) into end
-                    finally (cl-return (list beg end))))
-          ((setq boftap (bounds-of-thing-at-point 'sexp))
-           (list (car boftap) (cdr boftap)))
-          (t
-           (list (point) (point))))))
-
 (cl-defun eglot--code-action-params (&key (beg (point)) (end beg)
                                           only triggerKind)
   (list :textDocument (eglot--TextDocumentIdentifier)
@@ -4544,8 +4459,18 @@ the edit was attempted and optionally why not."
     ((_backend (eql eglot)) action)
   (eglot-execute (eglot--current-server-or-lose) (oref action data)))
 
-(cl-defmethod refactor-backend-rename-bounds ((_backend (eql eglot)))
-  (eglot--rename-bounds))
+(cl-defmethod refactor-backend-rename-bounds
+  ((_backend (eql eglot)))
+  (let* ((rename-support (eglot-server-capable-or-lose :renameProvider))
+         (prepare-support (and (listp rename-support)
+                               (plist-get rename-support :prepareProvider))))
+    (cond (prepare-support
+           (let ((x (eglot--request (eglot--current-server-or-lose)
+                                    :textDocument/prepareRename
+                                    (eglot--TextDocumentPositionParams))))
+             (cond ((null x) nil)
+                   (t (eglot-range-region x)))))
+          (t (bounds-of-thing-at-point 'symbol)))))
 
 (cl-defmethod refactor-backend-rename ((_backend (eql eglot)) newname)
   (let ((server (eglot--current-server-or-lose)))
@@ -4579,77 +4504,7 @@ the edit was attempted and optionally why not."
                 (refactor-rename . eglot-rename))))
 
 
-(define-fringe-bitmap 'eglot--fringe-action
-  [#b00000111
-   #b00001110
-   #b00011100
-   #b00111000
-   #b01111111
-   #b00001110
-   #b01011100
-   #b01111000
-   #b01110000
-   #b01111000]
-  nil nil 'center)
 
-(defun eglot-code-action-suggestion (cb &rest _ignored)
-  "A member of `eldoc-documentation-functions', for suggesting actions."
-  (when (and (eglot-server-capable :codeActionProvider)
-             eglot-code-action-indications)
-    (let ((buf (current-buffer))
-          (bounds (eglot--code-action-bounds))
-          (use-text-p (memq 'eldoc-hint eglot-code-action-indications))
-          tooltip blurb)
-      (eglot--async-request
-       (eglot--current-server-or-lose)
-       :textDocument/codeAction
-       (eglot--code-action-params :beg (car bounds) :end (cadr bounds)
-                                  :triggerKind 2)
-       :success-fn
-       (lambda (actions)
-         (eglot--when-buffer-window buf
-           (delete-overlay eglot--suggestion-overlay)
-           (when (cl-plusp (length actions))
-             (setq blurb
-                   (substitute-command-keys
-                    (eglot--format "\\[eglot-code-actions]: %s"
-                                   (plist-get (aref actions 0) :title))))
-             (if (>= (length actions) 2)
-                 (setq blurb (concat blurb (format " (and %s more actions)"
-                                                   (1- (length actions))))))
-             (setq tooltip
-                   (propertize eglot-code-action-indicator
-                               'face 'eglot-code-action-indicator-face
-                               'help-echo "mouse-1: execute code actions at point"
-                               'mouse-face 'highlight
-                               'keymap eglot-diagnostics-map))
-             (save-excursion
-               (goto-char (car bounds))
-               (let ((ov (make-overlay (car bounds) (cadr bounds))))
-                 (overlay-put ov 'eglot--actions actions)
-                 (overlay-put ov 'eglot--overlay t)
-                 (overlay-put
-                  ov
-                  'before-string
-                  (cond
-                   ((memq 'nearby eglot-code-action-indications)
-                    tooltip)
-                   ((and
-                     (memq 'left-fringe eglot-code-action-indications)
-                     (< 0 (nth 0 (window-fringes))))
-                    (propertize
-                     "⚡" 'display `(left-fringe
-                                     eglot--fringe-action
-                                     eglot-code-action-indicator-face)))
-                   ((memq 'margin eglot-code-action-indications)
-                    (propertize
-                     "⚡" 'display `((margin left-margin) ,tooltip)))))
-                 (setq eglot--suggestion-overlay ov))))
-           (when use-text-p (funcall cb blurb))))
-       :hint :textDocument/codeAction)
-      (and use-text-p t))))
-
-
 ;;; File watchers (aka didChangeWatchedFiles)
 ;;;
 (defvar eglot-watch-files-outside-project-root t

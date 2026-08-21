@@ -64,6 +64,11 @@
 (require 'eieio)
 (require 'flymake)
 
+(defgroup refactor nil
+  "Refactoring support." ; hmmm, a bit short no?
+  :prefix "refactor-"
+  :group 'tools)
+
 ;;;; Backends
 ;; JT@2026-08-21: While hook is may be a bit of overkill (plain
 ;; buffer-local variable would likely do), it and matches the Xref
@@ -242,7 +247,8 @@ backend has not finished yet."
             ;; A backend may call CALLBACK before returning.  When it
             ;; does, trust the callback's result over the return value.
             (unless (nth 3 slot)
-              (setf (nth 2 slot) (filter result))))
+              (setf (nth 2 slot)
+                    (if (listp result) (filter result) result))))
         (error
          (message "refactor: backend %S failed: %S"
                   (car slot) (cdr oops)))))
@@ -259,6 +265,7 @@ backend has not finished yet."
 ;;;; Commands
 ;;;
 (defvar refactor-kinds)
+(defvar refactor--suggestion-overlay)
 
 (defun refactor--bounds ()
   "Return (BEG END) for the current refactoring context.
@@ -327,7 +334,26 @@ the list of `refactor-action' objects."
                      refactor-kinds)
              nil t)))
      t))
-  (let ((actions (refactor--collect beg end :rkind rkind)))
+  (let* ((shortcut
+          (and interactive
+               (not (listp last-nonmenu-event)) ;; not run by mouse
+               (overlay-buffer refactor--suggestion-overlay)
+               (= beg (overlay-start refactor--suggestion-overlay))
+               (= end (overlay-end refactor--suggestion-overlay))))
+         (actions
+          (if shortcut
+              ;; `refactor-suggestion' just computed these for the same
+              ;; bounds: skip consulting the backends again.
+              (overlay-get refactor--suggestion-overlay 'refactor--actions)
+            (refactor--collect beg end :rkind rkind)))
+         ;; The shortcut skips collection, so filter here as
+         ;; `refactor--collect' would.
+         (actions
+          (if (and rkind shortcut)
+              (cl-remove-if-not
+               (lambda (a) (refactor-kind-matches-p (oref a kind) rkind))
+               actions)
+            actions)))
     (unless actions
       (user-error (if rkind "No \"%s\" refactorings here" "No refactorings here")
                   rkind))
@@ -381,6 +407,171 @@ Interactively, BACKEND is chosen to be the first backend in
   (refactor-apply-changeset (refactor-backend-rename backend newname)
                             :origin this-command))
 
+
+;;;; Suggestions
+;;;
+;; The indicator subsystem.  Its state is a single overlay marking
+;; the bounds of the actions available at point; `refactor-suggestion'
+;; is an ElDoc member computing them, possibly asynchronously.  The
+;; backends wire these things up: Eglot, for one, adds
+;; `refactor-suggestion' to `eldoc-documentation-functions' and
+;; `refactor-mode-line-indicator' to its mode-line format.
+
+(defcustom refactor-indications '(eldoc-hint left-fringe margin)
+  "How refactor backends indicate there are actions available at point.
+Value is a list of symbols, more than one can be specified:
+
+- `eldoc-hint': ElDoc is used to hint about at-point actions;
+- `left-fringe': A special indicator appears on the left fringe;
+- `margin': A special indicator appears in the margin;
+- `nearby': A special indicator appears near point;
+- `mode-line': A special indicator appears in the mode-line.
+
+If the list is empty, no hinting happens.
+
+Note additionally:
+
+- Some values are incompatible; if one or more of `nearby',
+  `left-fringe' and `margin' are specified, earlier values take
+  precedence.
+- The indicators for many of these are customizable via
+  `refactor-indicator' (which see), except for `left-fringe'.
+- `mode-line' only works if the backend's mode-line format includes
+  `refactor-mode-line-indicator' (which see)."
+  :type '(set
+          :tag "Tick the ones you're interested in"
+          (const :tag "ElDoc textual hint" eldoc-hint)
+          (const :tag "Right besides point" nearby)
+          (const :tag "In mode line" mode-line)
+          (const :tag "In left fringe" left-fringe)
+          (const :tag "In margin" margin)))
+
+(defface refactor-indicator-face
+  '((t (:inherit warning :weight bold)))
+  "Face used for action suggestions.")
+
+(defcustom refactor-indicator
+  (cl-loop for c in '(?↯ ?⭍ ?✓ ?α ??)
+           when (char-displayable-p c)
+           return (make-string 1 c))
+  "Indicator string for action suggestions."
+  :type (let ((basic-choices
+               (cl-loop for c in '(?↯ ?⭍ ?✓ ?α ??)
+                        when (char-displayable-p c)
+                        collect `(const :tag ,(format "Use `%c'" c)
+                                        ,(make-string 1 c)))))
+          `(choice ,@basic-choices
+                   (string :tag "Specify your own"))))
+
+(defvar-local refactor--suggestion-overlay (make-overlay 0 0)
+  "Overlay for `refactor-suggestion'.")
+
+(define-fringe-bitmap 'refactor--fringe-action
+  [#b00000111
+   #b00001110
+   #b00011100
+   #b00111000
+   #b01111111
+   #b00001110
+   #b01011100
+   #b01111000
+   #b01110000
+   #b01111000]
+  nil nil 'center)
+
+(cl-defmacro refactor--when-buffer-window (buf &body body)
+  "Check BUF showing somewhere, then do BODY in it."
+  (declare (indent 1) (debug t))
+  (let ((b (gensym)))
+    `(let ((,b ,buf))
+       (when (get-buffer-window ,b)
+         (with-current-buffer ,b ,@body)))))
+
+(defvar refactor-suggestion-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-2] #'refactor-at-mouse)
+    (define-key map [left-margin mouse-1] #'refactor-at-mouse)
+    map)
+  "Keymap active on the action suggestion indicator.")
+
+(defun refactor-suggestion (cb &rest _)
+  "A member of `eldoc-documentation-functions', for suggesting actions."
+  (when (and refactor-indications (refactor-find-backends))
+    (let ((buf (current-buffer))
+          (bounds (refactor--bounds))
+          (use-text-p (memq 'eldoc-hint refactor-indications))
+          tooltip blurb)
+      (refactor--collect
+       (car bounds) (cadr bounds)
+       :trigger-kind 2
+       :callback
+       (lambda (actions)
+         (refactor--when-buffer-window
+          buf
+          (when (overlay-buffer refactor--suggestion-overlay)
+            (delete-overlay refactor--suggestion-overlay))
+          (when (cl-plusp (length actions))
+            (setq blurb
+                  (substitute-command-keys
+                   (format "\\[refactor]: %s"
+                           (oref (car actions) title))))
+            (when (cdr actions)
+              (setq blurb (concat blurb (format " (and %s more actions)"
+                                                (length (cdr actions))))))
+            (setq tooltip
+                  (propertize refactor-indicator
+                              'face 'refactor-indicator-face
+                              'help-echo "mouse-1: execute actions at point"
+                              'mouse-face 'highlight
+                              'keymap refactor-suggestion-mode-map))
+            (save-excursion
+              (goto-char (car bounds))
+              (let ((ov (make-overlay (car bounds) (cadr bounds))))
+                (overlay-put ov 'refactor--actions actions)
+                (overlay-put
+                 ov 'before-string
+                 (cond
+                  ((memq 'nearby refactor-indications)
+                   tooltip)
+                  ((and (memq 'left-fringe refactor-indications)
+                        (< 0 (nth 0 (window-fringes))))
+                   (propertize
+                    "⚡" 'display `(left-fringe
+                                    refactor--fringe-action
+                                    refactor-indicator-face)))
+                  ((memq 'margin refactor-indications)
+                   (propertize
+                    "⚡" 'display `((margin left-margin) ,tooltip)))))
+                (setq refactor--suggestion-overlay ov))))
+          (when use-text-p (funcall cb blurb)))))
+      (and use-text-p t))))
+
+(defun refactor--mode-line-props (thing face defs)
+  "Helper for `refactor-mode-line-indicator'.
+Propertize THING with FACE and a keymap whose entries are DEFS,
+each a (KEY COMMAND HELP) triple."
+  (cl-loop with map = (make-sparse-keymap)
+           for (elem . rest) on defs
+           for (key def help) = elem
+           do (define-key map `[mode-line ,key] (refactor--mouse-call def t))
+           concat (format "%s: %s" key help) into blurb
+           when rest concat "\n" into blurb
+           finally (return (propertize
+                            thing
+                            'face face
+                            'keymap map 'help-echo blurb
+                            'mouse-face 'mode-line-highlight))))
+
+(defconst refactor-mode-line-indicator
+  '(:eval
+    (when (and (memq 'mode-line refactor-indications)
+               (overlay-buffer refactor--suggestion-overlay))
+      (refactor--mode-line-props
+       refactor-indicator 'refactor-indicator-face
+       `((mouse-1
+          refactor-at-mouse
+          "execute actions at point")))))
+  "Mode line construct for at-point refactoring actions.")
 
 ;;;; Kinds
 ;;;
@@ -526,7 +717,6 @@ not in the alist."
                                             (repeat :tag "File operation kinds" symbol)
                                             (const :tag "Default" t))
                           :value-type (choice . ,basic-choices))))
-  :group 'tools
   :version "32.1")
 
 (defconst refactor--changes-buffer-name "*refactor changes*"
