@@ -4494,9 +4494,6 @@ the edit was attempted and optionally why not."
 (cl-defmethod refactor-backend-name ((_backend (eql eglot)))
   "Eglot")
 
-(cl-defmethod refactor-backend-bounds ((_backend (eql eglot)))
-  (eglot--code-action-bounds))
-
 (defvar eglot--refactor-kinds
   '((quickfix . "quickfix") (refactor . "refactor")
     (extract . "refactor.extract") (inline . "refactor.inline")

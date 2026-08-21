@@ -90,23 +90,6 @@ collect the non-nil backends they return."
   "Return a short human-readable name for BACKEND."
   (:method (backend) (symbol-name backend)))
 
-(cl-defgeneric refactor-backend-bounds (backend)
-  "Return (BEG END) BACKEND should consider for actions at point.
-BEG and END delimit the program expression, diagnostic or region
-that a refactoring here would act on."
-  (:method (_backend)
-   (let (diags boftap)
-     (cond ((use-region-p) `(,(region-beginning) ,(region-end)))
-           ((setq diags (flymake-diagnostics (point) (point)))
-            (cl-loop for d in diags
-                     minimizing (flymake-diagnostic-beg d) into beg
-                     maximizing (flymake-diagnostic-end d) into end
-                     finally (cl-return (list beg end))))
-           ((setq boftap (bounds-of-thing-at-point 'sexp))
-            (list (car boftap) (cdr boftap)))
-           (t
-            (list (point) (point)))))))
-
 (cl-defgeneric refactor-backend-actions
     (backend beg end &key rkind callback trigger-kind)
   "Return refactoring actions BACKEND offers between BEG and END.
@@ -123,6 +106,7 @@ be called with the list eventually.  CALLBACK may be called from
 any buffer; staleness is handled by the caller.")
 
 (cl-defgeneric refactor-backend-rename-default (backend)
+  ;; FIXME: should this return bounds instead?  Shouldn't this be refactor-backend-rename-bounds
   "Return the new name to offer for the identifier at point, or nil.
 A nil return means BACKEND does not claim the identifier."
   (:method (_backend) nil))
@@ -276,7 +260,7 @@ backend has not finished yet."
 ;;;
 (defvar refactor-kinds)
 
-(defun refactor-bounds ()
+(defun refactor--bounds ()
   "Return (BEG END) for the current refactoring context.
 The active region, if any, else the union of Flymake diagnostics at
 point, else the bounds of the expression at point, else point."
@@ -333,11 +317,11 @@ If INTERACTIVE is nil, just return ACTIONS."
 If RKIND is non-nil, restrict search to actions of that kind and its
 sub-kinds; the kinds themselves are from `refactor-kinds'.
 
-Interactively, BEG and END default to `refactor-bounds', and a
-prefix argument prompts for KIND.  When INTERACTIVE is nil, return
+Interactively, BEG and END default to automatically calculated bounds
+and a prefix argument prompts for KIND.  When INTERACTIVE is nil, return
 the list of `refactor-action' objects."
   (interactive
-   `(,@(refactor-bounds)
+   `(,@(refactor--bounds)
      ,(and current-prefix-arg
            (intern
             (completing-read
@@ -357,7 +341,7 @@ the list of `refactor-action' objects."
   "Define NAME to execute KIND refactorings between BEG and END."
   `(defun ,name (beg &optional end)
      ,(format "Execute `%s' refactorings between BEG and END." kind)
-     (interactive (refactor-bounds))
+     (interactive (refactor--bounds))
      (refactor beg end ',kind t)))
 
 (defun refactor--mouse-call (what &optional update-mode-line)
