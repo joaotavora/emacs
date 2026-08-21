@@ -546,31 +546,19 @@ Note additionally:
           (when use-text-p (funcall cb blurb)))))
       (and use-text-p t))))
 
-(defun refactor--mode-line-props (thing face defs)
-  "Helper for `refactor-mode-line-indicator'.
-Propertize THING with FACE and a keymap whose entries are DEFS,
-each a (KEY COMMAND HELP) triple."
-  (cl-loop with map = (make-sparse-keymap)
-           for (elem . rest) on defs
-           for (key def help) = elem
-           do (define-key map `[mode-line ,key] (refactor--mouse-call def t))
-           concat (format "%s: %s" key help) into blurb
-           when rest concat "\n" into blurb
-           finally (return (propertize
-                            thing
-                            'face face
-                            'keymap map 'help-echo blurb
-                            'mouse-face 'mode-line-highlight))))
-
 (defconst refactor-mode-line-indicator
   '(:eval
     (when (and (memq 'mode-line refactor-indications)
                (overlay-buffer refactor--suggestion-overlay))
-      (refactor--mode-line-props
-       refactor-indicator 'refactor-indicator-face
-       `((mouse-1
-          refactor-at-mouse
-          "execute actions at point")))))
+      (let ((map (make-sparse-keymap)))
+        (define-key map [mode-line mouse-1]
+                    (refactor--mouse-call 'refactor-at-mouse t))
+        (propertize
+         refactor-indicator
+         'face 'refactor-indicator-face
+         'keymap map
+         'help-echo "mouse-1: execute actions at point"
+         'mouse-face 'mode-line-highlight))))
   "Mode line construct for at-point refactoring actions.")
 
 ;;;; Kinds
