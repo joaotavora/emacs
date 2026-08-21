@@ -4388,7 +4388,8 @@ If SILENT, don't echo progress in mode-line."
   (let ((pathify (symbol-function 'eglot-uri-to-path))
         (text-edit-op
          (lambda (path edits version)
-           (refactor-make-file-edit
+           (make-instance
+            'refactor-file-edit
             :file path
             :edits
             (lambda ()
@@ -4400,14 +4401,16 @@ If SILENT, don't echo progress in mode-line."
           (pcase (plist-get ch :kind)
             ("create"
              (eglot--dbind ((CreateFile) uri ((:options o))) ch
-               (refactor-make-file-creation
+               (make-instance
+                'refactor-file-creation
                 :file (funcall pathify uri)
                 :if-exists (cond ((plist-get o :ignoreIfExists) 'skip)
                                  ((plist-get o :overwrite) 'overwrite)
                                  (t 'error)))))
             ("rename"
              (eglot--dbind ((RenameFile) oldUri newUri ((:options o))) ch
-               (refactor-make-file-renaming
+               (make-instance
+                'refactor-file-renaming
                 :from (funcall pathify oldUri)
                 :to (funcall pathify newUri)
                 :if-exists (cond ((plist-get o :ignoreIfExists) 'skip)
@@ -4415,7 +4418,8 @@ If SILENT, don't echo progress in mode-line."
                                  (t 'error)))))
             ("delete"
              (eglot--dbind ((DeleteFile) uri ((:options o))) ch
-               (refactor-make-file-deletion
+               (make-instance
+                'refactor-file-deletion
                 :file (funcall pathify uri)
                 :recursive (plist-get o :recursive)
                 :if-missing (if (plist-get o :ignoreIfNotExists)
@@ -4526,7 +4530,8 @@ Register it first if it is one Eglot has never seen."
          (convert
           (lambda (actions)
             (cl-loop for a across actions
-                     for ra = (refactor-make-action
+                     for ra = (make-instance
+                               'refactor-action
                                :title (plist-get a :title)
                                :kind (eglot--refactor-kind
                                       (plist-get a :kind))

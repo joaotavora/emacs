@@ -52,6 +52,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'eieio)
 (require 'flymake)
 
 
@@ -388,65 +389,82 @@ A nil FILTER matches everything."
 
 ;;;; Actions
 
-(cl-defstruct (refactor-action (:constructor refactor-make-action)
-                               (:copier nil))
-  "A refactoring a backend offers to perform."
-  (title nil :documentation "One-line description, shown to the user.")
-  (kind nil :documentation "A symbol from `refactor-kinds', or nil.")
-  (preferred nil :documentation "Non-nil if this is the obvious choice here.")
-  (backend nil :documentation "The backend that offered this action.")
-  (data nil :documentation "Opaque payload, meaningful to the backend."))
+(defclass refactor-action ()
+  ((title :initarg :title :initform nil :accessor refactor-action-title
+          :documentation "One-line description, shown to the user.")
+   (kind :initarg :kind :initform nil :accessor refactor-action-kind
+         :documentation "A symbol from `refactor-kinds', or nil.")
+   (preferred :initarg :preferred :initform nil :accessor refactor-action-preferred
+              :documentation "Non-nil if this is the obvious choice here.")
+   (backend :initarg :backend :initform nil :accessor refactor-action-backend
+            :documentation "The backend that offered this action.")
+   (data :initarg :data :initform nil :accessor refactor-action-data
+         :documentation "Opaque payload, meaningful to the backend."))
+  :documentation "A refactoring a backend offers to perform.")
 
 
 ;;;; Changesets
 ;;;
-;; A changeset is an ordered list of operations, each an object of a
-;; type below.  Backends build them; `refactor-apply-changeset' shows
-;; them to the user and carries them out.
+;; A changeset is an ordered list of operations, each an instance of a
+;; class below.  Backends make them with `make-instance', and may
+;; subclass the classes for operations we haven't thought of;
+;; `refactor-apply-changeset' shows them to the user and carries them
+;; out.
 
-(cl-defstruct (refactor-operation (:constructor nil) (:copier nil))
-  "Abstract superclass of the operations making up a changeset."
-  (description nil :documentation "\
+(defclass refactor-operation ()
+  ((description :initarg :description :initform nil
+                :accessor refactor-operation-description
+                :documentation "\
 Overrides the description this operation would otherwise give of
 itself in prompts and summaries."))
+  :documentation "Abstract superclass of the operations making up a changeset."
+  :abstract t)
 
-(cl-defstruct (refactor-file-edit (:include refactor-operation)
-                                  (:constructor refactor-make-file-edit)
-                                  (:copier nil))
-  "An operation changing the text of a single file."
-  (file nil :documentation "Absolute name of the file to change.")
-  (edits nil :documentation "\
+(defclass refactor-file-edit (refactor-operation)
+  ((file :initarg :file :initform nil :accessor refactor-file-edit-file
+         :documentation "Absolute name of the file to change.")
+   (edits :initarg :edits :initform nil :accessor refactor-file-edit-edits
+          :documentation "\
 Either a list of (BEG END NEWTEXT), where BEG and END are integer
 positions valid in the widened buffer visiting the file, or a
 function of no arguments returning such a list, called with that
 buffer current.  Edits must not overlap."))
+  :documentation "An operation changing the text of a single file.")
 
-(cl-defstruct (refactor-file-creation (:include refactor-operation)
-                                      (:constructor refactor-make-file-creation)
-                                      (:copier nil))
-  "An operation creating a file."
-  (file nil :documentation "Absolute name of the file to create.")
-  (contents nil :documentation "Initial contents, or nil for an empty file.")
-  (if-exists 'error :documentation "\
+(defclass refactor-file-creation (refactor-operation)
+  ((file :initarg :file :initform nil :accessor refactor-file-creation-file
+         :documentation "Absolute name of the file to create.")
+   (contents :initarg :contents :initform nil
+             :accessor refactor-file-creation-contents
+             :documentation "Initial contents, or nil for an empty file.")
+   (if-exists :initarg :if-exists :initform 'error
+              :accessor refactor-file-creation-if-exists
+              :documentation "\
 What to do when the file already exists: `error', `skip' or `overwrite'."))
+  :documentation "An operation creating a file.")
 
-(cl-defstruct (refactor-file-renaming (:include refactor-operation)
-                                      (:constructor refactor-make-file-renaming)
-                                      (:copier nil))
-  "An operation renaming a file."
-  (from nil :documentation "Absolute name of the file to rename.")
-  (to nil :documentation "Absolute name to rename it to.")
-  (if-exists 'error :documentation "\
+(defclass refactor-file-renaming (refactor-operation)
+  ((from :initarg :from :initform nil :accessor refactor-file-renaming-from
+         :documentation "Absolute name of the file to rename.")
+   (to :initarg :to :initform nil :accessor refactor-file-renaming-to
+       :documentation "Absolute name to rename it to.")
+   (if-exists :initarg :if-exists :initform 'error
+              :accessor refactor-file-renaming-if-exists
+              :documentation "\
 What to do when the new name is taken: `error', `skip' or `overwrite'."))
+  :documentation "An operation renaming a file.")
 
-(cl-defstruct (refactor-file-deletion (:include refactor-operation)
-                                      (:constructor refactor-make-file-deletion)
-                                      (:copier nil))
-  "An operation deleting a file."
-  (file nil :documentation "Absolute name of the file to delete.")
-  (recursive nil :documentation "Non-nil to delete a directory's contents too.")
-  (if-missing 'error :documentation "\
+(defclass refactor-file-deletion (refactor-operation)
+  ((file :initarg :file :initform nil :accessor refactor-file-deletion-file
+         :documentation "Absolute name of the file to delete.")
+   (recursive :initarg :recursive :initform nil
+              :accessor refactor-file-deletion-recursive
+              :documentation "Non-nil to delete a directory's contents too.")
+   (if-missing :initarg :if-missing :initform 'error
+               :accessor refactor-file-deletion-if-missing
+               :documentation "\
 What to do when the file does not exist: `error' or `skip'."))
+  :documentation "An operation deleting a file.")
 
 (cl-defgeneric refactor-operation-kind (operation)
   "Return a symbol classifying OPERATION.
