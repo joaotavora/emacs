@@ -31,10 +31,10 @@
 ;; renaming an identifier, organizing imports, or fixing a diagnostic.
 ;;
 ;; It is deliberately ignorant of how those rewrites are discovered.
-;; A "backend" is any object listed in `refactor-backends'; methods of
-;; the `refactor-backend-*' generic functions dispatch on it, in the
-;; manner of `xref-backend-functions'.  Unlike Xref, every backend in
-;; the list contributes.
+;; A "backend" is any object returned by `refactor-backend-functions';
+;; methods of the `refactor-backend-*' generic functions dispatch on
+;; it, in the manner of `xref-backend-functions'.  Unlike Xref, every
+;; applicable backend contributes.
 ;;
 ;; The two halves of this library are independent and either is useful
 ;; alone:
@@ -57,16 +57,26 @@
 
 ;;;; Backends
 
-(defvar-local refactor-backends nil
-  "List of refactoring backends active in the current buffer.
+(defvar refactor-backend-functions nil
+  "Special hook to find the refactor backends for the current context.
+Each function on this hook is called in turn with no arguments, and
+should return either nil to mean that it is not applicable, or a
+refactor backend, a value to dispatch the `refactor-backend-*'
+generic functions.  Unlike `xref-backend-functions', from which
+this takes its shape, every applicable backend contributes: the
+actions offered by all backends are merged into a single list for
+the user to choose from.
 
-Each element is an arbitrary object designating a backend, used to
-dispatch the `refactor-backend-*' generic functions.  Modes and
-minor modes add to this list, usually buffer-locally.
+FIXME: This hook is probably overkill: a plain buffer-local
+variable of backends would likely do.  But a hook lets a backend
+decide lazily whether it applies, and matches the Xref precedent.")
 
-Unlike `xref-backend-functions', from which this takes its shape,
-every element contributes: the actions offered by all backends are
-merged into a single list for the user to choose from.")
+(defun refactor-find-backends ()
+  "Return the refactor backends applicable in the current context.
+Run every function on `refactor-backend-functions' in turn and
+collect the non-nil backends they return."
+  (cl-loop for finder in refactor-backend-functions
+           when (funcall finder) collect it))
 
 (cl-defgeneric refactor-backend-name (backend)
   "Return a short human-readable name for BACKEND."
@@ -119,8 +129,8 @@ A nil return means BACKEND does not claim the identifier."
 (cl-defun refactor--merge (actions new-actions)
   "Merge NEW-ACTIONS into ACTIONS, returning the new list.
 When two actions share the same title, the one already in ACTIONS
-wins, so among backends the one earliest in `refactor-backends'
-has priority."
+wins, so among backends the one earliest in
+`refactor-backend-functions' has priority."
   (dolist (a new-actions)
     (unless (cl-some (lambda (other)
                        (equal (refactor-action-title other)
@@ -133,10 +143,10 @@ has priority."
     (beg end &key kind callback trigger-kind
           &aux (serial (cl-incf refactor--serial))
                (slots (mapcar (lambda (backend) (list backend nil nil nil))
-                              refactor-backends))
+                              (refactor-find-backends)))
                (actions '())
                collecting)
-  "Gather actions for BEG END from every backend in `refactor-backends'.
+  "Gather actions for BEG END from every applicable backend.
 
 If CALLBACK is nil, return the merged list of `refactor-action's.
 
@@ -294,25 +304,21 @@ the list of `refactor-action' objects."
 (refactor--define-kind-command refactor-rewrite rewrite)
 (refactor--define-kind-command refactor-quickfix quickfix)
 
-(cl-defun refactor-rename (newname &aux (backend
-                                         (cl-some
-                                          (lambda (b)
-                                            (and (refactor-backend-rename-default b)
-                                                 b))
-                                          refactor-backends)))
-  "Rename the symbol at point to NEWNAME.
-The first backend in `refactor-backends' that claims the symbol at
-point proposes the changes."
+(cl-defun refactor-rename (newname backend)
+  "Rename the symbol at point to NEWNAME via BACKEND.
+Interactively, BACKEND is chosen to be the first backend in
+`refactor-backend-functions' that claims the symbol at point."
   (interactive
-   (list
-    (read-from-minibuffer
-     (format "Rename `%s' to: "
-             (or (cl-some #'refactor-backend-rename-default refactor-backends)
-                 "unknown symbol"))
-     nil nil nil nil
-     (cl-some #'refactor-backend-rename-default refactor-backends))))
-  (unless backend
-    (user-error "No backend can rename the symbol at point"))
+   (pcase-let ((`(,backend . ,sym-name)
+                (cl-loop for b in (refactor-find-backends)
+                         when (refactor-backend-rename-default b)
+                         return (cons b it))))
+     (unless backend
+       (user-error "No backend can rename the symbol at point"))
+     (list
+      (read-from-minibuffer (format "Rename `%s' to: " sym-name)
+       nil nil nil nil sym-name)
+      backend)))
   (refactor-apply-changeset (refactor-backend-rename backend newname)
                             :origin this-command))
 
