@@ -108,10 +108,10 @@ that a refactoring here would act on."
             (list (point) (point)))))))
 
 (cl-defgeneric refactor-backend-actions
-    (backend beg end &key kind callback trigger-kind)
+    (backend beg end &key rkind callback trigger-kind)
   "Return refactoring actions BACKEND offers between BEG and END.
 
-KIND, if non-nil, restricts the result to that kind and its
+RKIND, if non-nil, restricts the result to that kind and its
 sub-kinds.
 
 If CALLBACK is nil, return the list of `refactor-action' objects
@@ -212,7 +212,7 @@ wins, so among backends the one earliest in
   (nreverse actions))
 
 (cl-defun refactor--collect
-    (beg end &key kind callback trigger-kind
+    (beg end &key rkind callback trigger-kind
           &aux (serial (cl-incf refactor--serial))
                (slots (mapcar (lambda (backend) (list backend nil nil nil))
                               (refactor-find-backends)))
@@ -234,24 +234,31 @@ backend has not finished yet."
            (let ((result (nth 2 slot)))
              (unless (eq result :async)
                (setq actions (refactor--merge actions result))
-               (when callback (funcall callback actions)))))))
+               (when callback (funcall callback actions))))))
+       (filter (actions)
+         (cl-remove-if-not
+          (lambda (a)
+            (refactor-kind-matches-p (oref a kind) rkind))
+          actions)))
     (setq collecting t)
+    ;; TODO explain what these slots are and how they enable the hybrid
+    ;; maybe-CALLBACK, maybe-retval logic.
     (dolist (slot slots)
       (condition-case-unless-debug oops
           (let ((result
                  (refactor-backend-actions
                   (car slot) beg end
-                  :kind kind
+                  :rkind rkind
                   :trigger-kind trigger-kind
                   :callback (lambda (result)
                               (when (= serial refactor--serial)
                                 (setf (nth 3 slot) t
-                                      (nth 2 slot) result)
+                                      (nth 2 slot) (filter result))
                                 (deliver slot))))))
             ;; A backend may call CALLBACK before returning.  When it
             ;; does, trust the callback's result over the return value.
             (unless (nth 3 slot)
-              (setf (nth 2 slot) result)))
+              (setf (nth 2 slot) (filter result))))
         (error
          (message "refactor: backend %S failed: %S"
                   (car slot) (cdr oops)))))
@@ -320,10 +327,10 @@ If INTERACTIVE is nil, just return ACTIONS."
         (when chosen (refactor--execute-action chosen))
       actions)))
 
-(cl-defun refactor (beg &optional end kind interactive)
+(cl-defun refactor (beg &optional end rkind interactive)
   "Find refactoring actions between BEG and END, and offer to run them.
 
-If KIND is non-nil, only consider actions of that kind and its
+If RKIND is non-nil, restrict search to actions of that kind and its
 sub-kinds; the kinds themselves are from `refactor-kinds'.
 
 Interactively, BEG and END default to `refactor-bounds', and a
@@ -340,10 +347,10 @@ the list of `refactor-action' objects."
                      refactor-kinds)
              nil t)))
      t))
-  (let ((actions (refactor--collect beg end :kind kind)))
+  (let ((actions (refactor--collect beg end :rkind rkind)))
     (unless actions
-      (user-error (if kind "No \"%s\" refactorings here" "No refactorings here")
-                  kind))
+      (user-error (if rkind "No \"%s\" refactorings here" "No refactorings here")
+                  rkind))
     (refactor--read-execute-action actions interactive)))
 
 (defmacro refactor--define-kind-command (name kind)

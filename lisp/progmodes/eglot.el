@@ -4491,6 +4491,12 @@ the edit was attempted and optionally why not."
 
 ;;;; The refactor backend
 ;;;
+(cl-defmethod refactor-backend-name ((_backend (eql eglot)))
+  "Eglot")
+
+(cl-defmethod refactor-backend-bounds ((_backend (eql eglot)))
+  (eglot--code-action-bounds))
+
 (defvar eglot--refactor-kinds
   '((quickfix . "quickfix") (refactor . "refactor")
     (extract . "refactor.extract") (inline . "refactor.inline")
@@ -4499,61 +4505,42 @@ the edit was attempted and optionally why not."
     (fix-all . "source.fixAll"))
   "Alist mapping `refactor' kind symbols to LSP code action kinds.")
 
-(defun eglot--refactor-kind (lsp-kind)
-  "Return the `refactor' kind symbol for LSP-KIND, a string or nil.
-Register it first if it is one Eglot has never seen."
-  (when lsp-kind
-    (or (car (rassoc lsp-kind eglot--refactor-kinds))
-        (let* ((kind (intern (replace-regexp-in-string "\\." "-" lsp-kind)))
-               (parent (car (cl-find-if
-                             (lambda (pair)
-                               (string-prefix-p (concat (cdr pair) ".")
-                                                lsp-kind))
-                             eglot--refactor-kinds))))
-          (put kind 'refactor-kind-parent parent)
-          (put kind 'refactor-kind-documentation
-               (format "An action of LSP kind \"%s\"." lsp-kind))
-          (add-to-list 'refactor-kinds kind)
-          kind))))
-
-(cl-defmethod refactor-backend-name ((_backend (eql eglot)))
-  "Eglot")
-
-(cl-defmethod refactor-backend-bounds ((_backend (eql eglot)))
-  (eglot--code-action-bounds))
-
 (cl-defmethod refactor-backend-actions
-    ((_backend (eql eglot)) beg end &key kind callback trigger-kind)
+    ((_backend (eql eglot)) beg end &key rkind callback trigger-kind)
   (eglot-server-capable-or-lose :codeActionProvider)
-  (let* ((server (eglot--current-server-or-lose))
-         (only (and kind (cdr (assq kind eglot--refactor-kinds))))
-         (convert
-          (lambda (actions)
-            (cl-loop for a across actions
-                     for ra = (make-instance
-                               'refactor-action
-                               :title (plist-get a :title)
-                               :kind (eglot--refactor-kind
-                                      (plist-get a :kind))
-                               :preferred (plist-get a :isPreferred)
-                               :backend 'eglot
-                               :data a)
-                     when (refactor-kind-matches-p (oref ra kind) kind)
-                     collect ra)))
-         (params
-          (eglot--code-action-params :beg beg :end end :only only
-                                     :triggerKind trigger-kind)))
-    (cond
-     (callback
-      (eglot--async-request
-       server
-       :textDocument/codeAction
-       params
-       :success-fn (lambda (actions) (funcall callback (funcall convert actions)))
-       :hint :textDocument/codeAction)
-      :async)
-     (t
-      (funcall convert (eglot--request server :textDocument/codeAction params))))))
+  (cl-labels
+      ((kind (lsp-kind)
+         (when lsp-kind
+           (or (car (rassoc lsp-kind eglot--refactor-kinds))
+               (let ((dot (string-match-p "\\." lsp-kind)))
+                 (intern (replace-regexp-in-string
+                          "\\." "-" (substring lsp-kind (if dot (1+ dot) 0))))))))
+       (convert (actions)
+         (cl-loop for a across actions
+                  for ra = (make-instance
+                            'refactor-action
+                            :title (plist-get a :title)
+                            :kind (kind (plist-get a :kind))
+                            :preferred (plist-get a :isPreferred)
+                            :backend 'eglot
+                            :data a)
+                  collect ra)))
+    (let* ((server (eglot--current-server-or-lose))
+           (lsp-rkind (and rkind (cdr (assq rkind eglot--refactor-kinds))))
+           (params
+            (eglot--code-action-params :beg beg :end end :only lsp-rkind
+                                       :triggerKind trigger-kind)))
+      (cond
+       (callback
+        (eglot--async-request
+         server
+         :textDocument/codeAction
+         params
+         :success-fn (lambda (actions) (funcall callback (convert actions)))
+         :hint :textDocument/codeAction)
+        :async)
+       (t
+        (convert (eglot--request server :textDocument/codeAction params)))))))
 
 (cl-defmethod refactor-backend-execute
     ((_backend (eql eglot)) action)
