@@ -29,32 +29,35 @@
 ;; This library provides a common interface for tools that offer to
 ;; rewrite a program: extracting a function, inlining a variable,
 ;; renaming an identifier, organizing imports, or fixing a diagnostic.
-;;
-;; It is deliberately ignorant of how those rewrites are discovered.
-;; A "backend" is any object returned by `refactor-backend-functions';
-;; methods of the `refactor-backend-*' generic functions dispatch on
-;; it, in the manner of `xref-backend-functions'.  Unlike Xref, every
-;; applicable backend contributes.
+;; It is deliberately ignorant of how those rewrites are discovered/put
+;; together..
 ;;
 ;; The two halves of this library are independent and either is useful
 ;; alone:
 ;;
-;; - Discovery and selection: `refactor' asks the backends what they
-;;   can do here and lets the user pick.
-;;
 ;; - Application: `refactor-apply-changeset' takes a description of
 ;;   changes to a project -- edits to files, and the creation, renaming
 ;;   and deletion of files -- and carries them out, having first shown
-;;   them to the user as a summary or a diff, according to
-;;   `refactor-confirmation'.  A backend may call this directly, and
-;;   should, for changes it was not asked for.
+;;   them to the user as a summary or a diff, according to the user
+;;   preferences in `refactor-confirmation'.  An Elisp library may call
+;;   this directly for applying changes obtained intrinsically,
+;;   i.e. without being asked for changes.
+;;
+;; - Discovery and selection: The user-facing entry point `refactor', a
+;;   command, asks the backends via `refactor-backend-actions' what they
+;;   can do here and lets the user pick.  A "backend" is any object
+;;   returned by `refactor-backend-functions'; methods of the
+;;   `refactor-backend-*' generic functions dispatch on it, in the
+;;   manner of `xref-backend-functions'.  Unlike Xref, every applicable
+;;   backend contributes.It then calls `refactor-apply-changeset'
+;;   itself.
+;;
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'eieio)
 (require 'flymake)
-
 
 ;;;; Backends
 
@@ -128,6 +131,71 @@ A nil return means BACKEND does not claim the identifier."
   "Return a changeset renaming the identifier at point to NEWNAME."
   (:method (_backend _newname) nil))
 
+;;;; Utils
+
+(defmacro refactor--defclass (name superclasses docstring &rest specs)
+  "Util for cutting down on defclass boilerplate.
+NAME, SUPERCLASSES and DOCSTRING are as in `defclass'.  Each of SPECS
+is (SLOT INITFORM SLOT-DOCSTRING)."
+  (declare (indent 2) (debug (&define name sexp stringp &rest sexp)))
+  `(defclass ,name ,superclasses
+     ,(mapcar (lambda (spec)
+                (cl-destructuring-bind (slot initform slotdoc) spec
+                  `(,slot :initarg ,(intern (concat ":" (symbol-name slot)))
+                          :initform ,initform
+                          :documentation ,slotdoc)))
+              specs)
+     :documentation ,docstring))
+
+;;;; Actions
+
+(refactor--defclass refactor-action ()
+  "A refactoring a backend offers to perform."
+  (title nil "One-line description, shown to the user.")
+  (kind nil "A symbol from `refactor-kinds', or nil.")
+  (preferred nil "Non-nil if this is the obvious choice here.")
+  (backend nil "The backend that offered this action.")
+  (data nil "Opaque payload, meaningful to the backend."))
+
+;;;; Changesets
+;;;
+;; A changeset is an ordered list of operations, each an instance of a
+;; class below.  Backends make them with `make-instance', and may
+;; subclass the classes for operations we haven't thought of;
+;; `refactor-apply-changeset' shows them to the user and carries them
+;; out.  FIXME: move this to the manual later.
+
+(refactor--defclass refactor-operation ()
+  "Superclass of the operations making up a changeset.")
+
+(refactor--defclass refactor-file-edit (refactor-operation)
+  "Operation changing the text of a single file."
+  (file nil "Absolute name of the file to change.")
+  (edits nil "\
+Either a list of (BEG END NEWTEXT), where BEG and END are integer
+positions valid in the widened buffer visiting the file, or a
+function of no arguments returning such a list, called with that
+buffer current.  Edits must not overlap."))
+
+(refactor--defclass refactor-file-creation (refactor-operation)
+  "Operation creating a file."
+  (file nil "Absolute name of the file to create.")
+  (contents nil "Initial contents, or nil for an empty file.")
+  (if-exists 'error "What to do if file exists: `error', `skip' or `overwrite'."))
+
+(refactor--defclass refactor-file-renaming (refactor-operation)
+  "Operation renaming a file."
+  (from nil "Absolute name of the file to rename.")
+  (to nil "Absolute name to rename it to.")
+  (if-exists 'error "What to do if new name is taken: `error', `skip' or `overwrite'."))
+
+(refactor--defclass refactor-file-deletion (refactor-operation)
+  "Operation deleting a file."
+  (file nil "Absolute name of the file to delete.")
+  (recursive nil "Non-nil to delete a directory's contents too.")
+  (if-missing 'error "What to do if file does not exist: `error' or `skip'."))
+
+;;;; Collecting actions
 (defvar-local refactor--serial 0
   "Serial number of the most recent action discovery round.")
 
@@ -138,8 +206,7 @@ wins, so among backends the one earliest in
 `refactor-backend-functions' has priority."
   (dolist (a new-actions)
     (unless (cl-some (lambda (other)
-                       (equal (refactor-action-title other)
-                              (refactor-action-title a)))
+                       (equal (oref other title) (oref a title)))
                      actions)
       (push a actions)))
   (nreverse actions))
@@ -198,7 +265,6 @@ backend has not finished yet."
         actions)
     actions))
 
-
 ;;;; Commands
 ;;;
 (defvar refactor-kinds)
@@ -226,17 +292,17 @@ point, else the bounds of the expression at point, else point."
 
 (cl-defun refactor--execute-action (action)
   "Carry ACTION out."
-  (refactor-backend-execute (refactor-action-backend action) action))
+  (refactor-backend-execute (oref action backend) action))
 
 (defun refactor--read-execute-action (actions interactive)
   "Choose and execute one of ACTIONS, a list of `refactor-action's.
 Interactively, if there is only one, execute it without asking.
 If INTERACTIVE is nil, just return ACTIONS."
   (let* ((menu-items (cl-loop for a in actions
-                              collect (cons (refactor-action-title a) a)))
+                              collect (cons (oref a title) a)))
          (preferred-action
           (cl-find-if (lambda (menu-item)
-                        (refactor-action-preferred (cdr menu-item)))
+                        (oref (cdr menu-item) preferred))
                       menu-items))
          (default-action (car (or preferred-action (car menu-items))))
          (chosen (if (and interactive (null (cdr menu-items)))
@@ -330,14 +396,15 @@ Interactively, BACKEND is chosen to be the first backend in
 
 ;;;; Kinds
 ;;;
-;; Kinds are symbols in a hierarchy, so that asking for `refactor'
-;; also offers extractions, and so that a backend can register a kind
-;; nobody anticipated under whichever known kind it most resembles.
+;; Kinds are symbols in a hierarchy, so that asking for `refactor' also
+;; offers extractions, and so that a backend can register a kind nobody
+;; anticipated under whichever known kind it most resembles.  FIXME: not
+;; sure this is useful.
 
 (defvar refactor-kinds nil
   "List of all refactoring kinds defined so far, in definition order.")
 
-(defmacro refactor-define-kind (name parent docstring)
+(defmacro refactor-defkind (name parent docstring)
   "Define NAME as a kind of refactoring.
 PARENT is the kind NAME specializes, or nil if NAME is itself a
 top-level kind.  DOCSTRING describes NAME to the user."
@@ -360,106 +427,32 @@ A nil FILTER matches everything."
       (cl-loop for k = kind then (get k 'refactor-kind-parent)
                while k thereis (eq k filter))))
 
-(refactor-define-kind quickfix nil
+(refactor-defkind quickfix nil
   "Fix a problem reported at point.")
 
-(refactor-define-kind refactor nil
+(refactor-defkind refactor nil
   "Change code without changing what it does.")
 
-(refactor-define-kind extract refactor
+(refactor-defkind extract refactor
   "Extract code into a new named entity.")
 
-(refactor-define-kind inline refactor
+(refactor-defkind inline refactor
   "Inline a named entity into the places that use it.")
 
-(refactor-define-kind rewrite refactor
+(refactor-defkind rewrite refactor
   "Restate code in a different form.")
 
-(refactor-define-kind move refactor
+(refactor-defkind move refactor
   "Move an entity somewhere else.")
 
-(refactor-define-kind source nil
+(refactor-defkind source nil
   "Act on the whole file rather than on a selection.")
 
-(refactor-define-kind organize-imports source
+(refactor-defkind organize-imports source
   "Tidy up the file's import declarations.")
 
-(refactor-define-kind fix-all source
+(refactor-defkind fix-all source
   "Apply every fix available in the file.")
-
-
-;;;; Actions
-
-(defclass refactor-action ()
-  ((title :initarg :title :initform nil :accessor refactor-action-title
-          :documentation "One-line description, shown to the user.")
-   (kind :initarg :kind :initform nil :accessor refactor-action-kind
-         :documentation "A symbol from `refactor-kinds', or nil.")
-   (preferred :initarg :preferred :initform nil :accessor refactor-action-preferred
-              :documentation "Non-nil if this is the obvious choice here.")
-   (backend :initarg :backend :initform nil :accessor refactor-action-backend
-            :documentation "The backend that offered this action.")
-   (data :initarg :data :initform nil :accessor refactor-action-data
-         :documentation "Opaque payload, meaningful to the backend."))
-  :documentation "A refactoring a backend offers to perform.")
-
-
-;;;; Changesets
-;;;
-;; A changeset is an ordered list of operations, each an instance of a
-;; class below.  Backends make them with `make-instance', and may
-;; subclass the classes for operations we haven't thought of;
-;; `refactor-apply-changeset' shows them to the user and carries them
-;; out.
-
-(defclass refactor-operation ()
-  ((description :initarg :description :initform nil
-                :documentation "\
-Overrides the description this operation would otherwise give of
-itself in prompts and summaries."))
-  :documentation "Abstract superclass of the operations making up a changeset."
-  :abstract t)
-
-(defclass refactor-file-edit (refactor-operation)
-  ((file :initarg :file :initform nil
-         :documentation "Absolute name of the file to change.")
-   (edits :initarg :edits :initform nil
-          :documentation "\
-Either a list of (BEG END NEWTEXT), where BEG and END are integer
-positions valid in the widened buffer visiting the file, or a
-function of no arguments returning such a list, called with that
-buffer current.  Edits must not overlap."))
-  :documentation "An operation changing the text of a single file.")
-
-(defclass refactor-file-creation (refactor-operation)
-  ((file :initarg :file :initform nil
-         :documentation "Absolute name of the file to create.")
-   (contents :initarg :contents :initform nil
-             :documentation "Initial contents, or nil for an empty file.")
-   (if-exists :initarg :if-exists :initform 'error
-              :documentation "\
-What to do when the file already exists: `error', `skip' or `overwrite'."))
-  :documentation "An operation creating a file.")
-
-(defclass refactor-file-renaming (refactor-operation)
-  ((from :initarg :from :initform nil
-         :documentation "Absolute name of the file to rename.")
-   (to :initarg :to :initform nil
-       :documentation "Absolute name to rename it to.")
-   (if-exists :initarg :if-exists :initform 'error
-              :documentation "\
-What to do when the new name is taken: `error', `skip' or `overwrite'."))
-  :documentation "An operation renaming a file.")
-
-(defclass refactor-file-deletion (refactor-operation)
-  ((file :initarg :file :initform nil
-         :documentation "Absolute name of the file to delete.")
-   (recursive :initarg :recursive :initform nil
-              :documentation "Non-nil to delete a directory's contents too.")
-   (if-missing :initarg :if-missing :initform 'error
-               :documentation "\
-What to do when the file does not exist: `error' or `skip'."))
-  :documentation "An operation deleting a file.")
 
 (cl-defgeneric refactor-operation-kind (operation)
   "Return a symbol classifying OPERATION.
@@ -470,7 +463,7 @@ symbols `refactor-confirmation' matches against."
   (:method ((_ refactor-file-renaming)) 'rename)
   (:method ((_ refactor-file-deletion)) 'delete))
 
-(cl-defgeneric refactor--describe (operation)
+(cl-defgeneric refactor-describe (operation)
   "Return a one-line description of OPERATION."
   (:method ((op refactor-file-edit))
    (with-slots (file edits) op
@@ -485,10 +478,6 @@ symbols `refactor-confirmation' matches against."
      (format "Rename `%s' to `%s'" from to)))
   (:method ((op refactor-file-deletion))
    (format "Delete `%s'" (oref op file))))
-
-(defun refactor-operation-summary (operation)
-  "Return the description of OPERATION to show the user."
-  (or (oref operation description) (refactor--describe operation)))
 
 ;;;; Applying edits to a buffer
 
@@ -536,7 +525,6 @@ Unless SILENT, report progress in the echo area."
                     (reverse edits)))
       (undo-amalgamate-change-group change-group)
       (when reporter (progress-reporter-done reporter)))))
-
 
 ;;;; Applying a changeset
 
@@ -660,7 +648,7 @@ obsolete command; use %S instead."
   (unless (refactor-file-edit-p operation)
     (message "%s" (replace-regexp-in-string
                    "^\\([^ ]+\\) " "\\1d "
-                   (refactor-operation-summary operation)))))
+                   (refactor-describe operation)))))
 
 (defun refactor--file-text (file)
   "Insert the full text of FILE into the current buffer.
@@ -727,7 +715,7 @@ applied and, if not, why not."
          (y-or-n-p
           (format "These changes will be made:\n%s\nProceed? "
                   (mapconcat (lambda (op)
-                               (concat "  " (refactor-operation-summary op)))
+                               (concat "  " (refactor-describe op)))
                              operations "\n"))))
        (apply-all ()
          (mapc #'refactor--apply-and-report operations)
@@ -761,7 +749,7 @@ applied and, if not, why not."
                           (when (refactor-file-edit-p op)
                             (display-buffer
                              (refactor--propose-changes-as-diff (list op))))
-                          (format "%s? " (refactor-operation-summary op)))
+                          (format "%s? " (refactor-describe op)))
                         (lambda (op)
                           (set-window-configuration wconf)
                           (refactor--apply-and-report op)

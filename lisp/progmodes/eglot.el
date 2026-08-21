@@ -4538,8 +4538,7 @@ Register it first if it is one Eglot has never seen."
                                :preferred (plist-get a :isPreferred)
                                :backend 'eglot
                                :data a)
-                     when (refactor-kind-matches-p
-                           (refactor-action-kind ra) kind)
+                     when (refactor-kind-matches-p (oref ra kind) kind)
                      collect ra)))
          (params
           (eglot--code-action-params :beg beg :end end :only only
@@ -4558,8 +4557,7 @@ Register it first if it is one Eglot has never seen."
 
 (cl-defmethod refactor-backend-execute
     ((_backend (eql eglot)) action)
-  (eglot-execute (eglot--current-server-or-lose)
-                 (refactor-action-data action)))
+  (eglot-execute (eglot--current-server-or-lose) (oref action data)))
 
 (cl-defmethod refactor-backend-rename-default ((_backend (eql eglot)))
   (eglot--rename-default))
