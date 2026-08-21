@@ -33,26 +33,31 @@
 ;; together..
 ;;
 ;; The two halves of this library are independent and either is useful
-;; alone:
+;; alone to Elisp libraries.
 ;;
-;; - Application: `refactor-apply-changeset' takes a description of
-;;   changes to a project -- edits to files, and the creation, renaming
-;;   and deletion of files -- and carries them out, having first shown
-;;   them to the user as a summary or a diff, according to the user
-;;   preferences in `refactor-confirmation'.  An Elisp library may call
-;;   this directly for applying changes obtained intrinsically,
-;;   i.e. without being asked for changes.
+;; - Discovery and selection: The user-facing command entry points
+;;   communicates with "refactor backends", i.e. any object returned by
+;;   `refactor-backend-functions'; methods of the `refactor-backend-*'
+;;   generic functions dispatch on it, in the manner of
+;;   `xref-backend-functions'.  Unlike Xref, every applicable backend
+;;   contributes.  The `refactor' command asks backends via
+;;   `refactor-backend-actions' what "actions", i.e. potential
+;;   refactorings, can be carried out for the buffer near point.
+;;   Actions are presented to the user for selection.  When one is
+;;   chosen, the backend who provided it is asked again to carry it out
+;;   via `refactor-backend-execute'.  A common implementation could then
+;;   (and normally would) compute a changeset and offer to apply it with
+;;   `refactor-apply-changeset'.
 ;;
-;; - Discovery and selection: The user-facing entry point `refactor', a
-;;   command, asks the backends via `refactor-backend-actions' what they
-;;   can do here and lets the user pick.  A "backend" is any object
-;;   returned by `refactor-backend-functions'; methods of the
-;;   `refactor-backend-*' generic functions dispatch on it, in the
-;;   manner of `xref-backend-functions'.  Unlike Xref, every applicable
-;;   backend contributes.It then calls `refactor-apply-changeset'
-;;   itself.
+;; - Changeset application: `refactor-apply-changeset' takes a
+;;   description of changes to a project -- edits to files, and the
+;;   creation, renaming and deletion of files -- and carries them out,
+;;   offering a preview to the user as a summary description, full diff
+;;   or other confirmation method, according to the user preferences in
+;;   `refactor-confirmation'.  An Elisp library may call this directly
+;;   for applying changes with confirmation without being asked by
+;;   `refactor-backend-execute'.
 ;;
-
 ;;; Code:
 
 (require 'cl-lib)
@@ -60,6 +65,9 @@
 (require 'flymake)
 
 ;;;; Backends
+;; JT@2026-08-21: While hook is may be a bit of overkill (plain
+;; buffer-local variable would likely do), it and matches the Xref
+;; precedent.
 
 (defvar refactor-backend-functions nil
   "Special hook to find the refactor backends for the current context.
@@ -69,11 +77,7 @@ refactor backend, a value to dispatch the `refactor-backend-*'
 generic functions.  Unlike `xref-backend-functions', from which
 this takes its shape, every applicable backend contributes: the
 actions offered by all backends are merged into a single list for
-the user to choose from.
-
-FIXME: This hook is probably overkill: a plain buffer-local
-variable of backends would likely do.  But a hook lets a backend
-decide lazily whether it applies, and matches the Xref precedent.")
+the user to choose from.")
 
 (defun refactor-find-backends ()
   "Return the refactor backends applicable in the current context.
@@ -92,7 +96,7 @@ collect the non-nil backends they return."
 
 (cl-defgeneric refactor-backend-actions
     (backend beg end &key rkind callback trigger-kind)
-  "Return refactoring actions BACKEND offers between BEG and END.
+  "Compute refactoring actions BACKEND offers between BEG and END.
 
 RKIND, if non-nil, restricts the result to that kind and its
 sub-kinds.
@@ -100,19 +104,20 @@ sub-kinds.
 If CALLBACK is nil, return the list of `refactor-action' objects
 directly; blocking to do so is acceptable.
 
-If CALLBACK is non-nil, either return the list directly anyway,
-when that is cheap, or return `:async' and arrange for CALLBACK to
-be called with the list eventually.  CALLBACK may be called from
-any buffer; staleness is handled by the caller.")
+If CALLBACK is non-nil, either return the list of actions directly
+anyway (when that is cheap) or return `:async' after arrange for
+CALLBACK to be called with the list of actions eventually (but at most
+once).")
 
-(cl-defgeneric refactor-backend-rename-default (backend)
-  ;; FIXME: should this return bounds instead?  Shouldn't this be refactor-backend-rename-bounds
-  "Return the new name to offer for the identifier at point, or nil.
-A nil return means BACKEND does not claim the identifier."
+(cl-defgeneric refactor-backend-rename-bounds (backend)
+  "Return bounds of thing BACKEND could rename near point.
+If the return value is a cons of buffer positions (BEG . END) these are
+the bounds of the thing nearby thing that BACKEND claims as renameable.
+A nil return means BACKEND does not claim this as renameable."
   (:method (_backend) nil))
 
 (cl-defgeneric refactor-backend-rename (backend newname)
-  "Return a changeset renaming the identifier at point to NEWNAME."
+  "Compute a changeset renaming the identifier at point to NEWNAME."
   (:method (_backend _newname) nil))
 
 ;;;; Utils
@@ -180,9 +185,6 @@ buffer current.  Edits must not overlap."))
   (if-missing 'error "What to do if file does not exist: `error' or `skip'."))
 
 ;;;; Collecting actions
-(defvar-local refactor--serial 0
-  "Serial number of the most recent action discovery round.")
-
 (cl-defun refactor--merge (actions new-actions)
   "Merge NEW-ACTIONS into ACTIONS, returning the new list.
 When two actions share the same title, the one already in ACTIONS
@@ -197,8 +199,7 @@ wins, so among backends the one earliest in
 
 (cl-defun refactor--collect
     (beg end &key rkind callback trigger-kind
-          &aux (serial (cl-incf refactor--serial))
-               (slots (mapcar (lambda (backend) (list backend nil nil nil))
+          &aux (slots (mapcar (lambda (backend) (list backend nil nil nil))
                               (refactor-find-backends)))
                (actions '())
                collecting)
@@ -225,8 +226,8 @@ backend has not finished yet."
             (refactor-kind-matches-p (oref a kind) rkind))
           actions)))
     (setq collecting t)
-    ;; TODO explain what these slots are and how they enable the hybrid
-    ;; maybe-CALLBACK, maybe-retval logic.
+    ;; TODO explain here in a comment what these slots are and how they
+    ;; enable the hybrid maybe-CALLBACK, maybe-retval logic.
     (dolist (slot slots)
       (condition-case-unless-debug oops
           (let ((result
@@ -235,10 +236,9 @@ backend has not finished yet."
                   :rkind rkind
                   :trigger-kind trigger-kind
                   :callback (lambda (result)
-                              (when (= serial refactor--serial)
-                                (setf (nth 3 slot) t
-                                      (nth 2 slot) (filter result))
-                                (deliver slot))))))
+                              (setf (nth 3 slot) t
+                                    (nth 2 slot) (filter result))
+                              (deliver slot)))))
             ;; A backend may call CALLBACK before returning.  When it
             ;; does, trust the callback's result over the return value.
             (unless (nth 3 slot)
@@ -281,10 +281,6 @@ point, else the bounds of the expression at point, else point."
   (:method (_backend _action)
    (error "Refactor backend doesn't know how to execute actions")))
 
-(cl-defun refactor--execute-action (action)
-  "Carry ACTION out."
-  (refactor-backend-execute (oref action backend) action))
-
 (defun refactor--read-execute-action (actions interactive)
   "Choose and execute one of ACTIONS, a list of `refactor-action's.
 Interactively, if there is only one, execute it without asking.
@@ -308,7 +304,7 @@ If INTERACTIVE is nil, just return ACTIONS."
                                   menu-items nil t nil nil default-action)
                                  menu-items))))))
     (if interactive
-        (when chosen (refactor--execute-action chosen))
+        (when chosen (refactor-backend-execute (oref chosen backend) chosen))
       actions)))
 
 (cl-defun refactor (beg &optional end rkind interactive)
@@ -371,16 +367,17 @@ the list of `refactor-action' objects."
 Interactively, BACKEND is chosen to be the first backend in
 `refactor-backend-functions' that claims the symbol at point."
   (interactive
-   (pcase-let ((`(,backend . ,sym-name)
+   (pcase-let ((`(,backend . ,bounds)
                 (cl-loop for b in (refactor-find-backends)
-                         when (refactor-backend-rename-default b)
+                         when (refactor-backend-rename-bounds b)
                          return (cons b it))))
      (unless backend
        (user-error "No backend can rename the symbol at point"))
-     (list
-      (read-from-minibuffer (format "Rename `%s' to: " sym-name)
-       nil nil nil nil sym-name)
-      backend)))
+     (let ((sym-name (buffer-substring-no-properties (car bounds) (cdr bounds))))
+       (list
+        (read-from-minibuffer (format "Rename `%s' to: " sym-name)
+         nil nil nil nil sym-name)
+        backend))))
   (refactor-apply-changeset (refactor-backend-rename backend newname)
                             :origin this-command))
 

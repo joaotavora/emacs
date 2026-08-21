@@ -4447,7 +4447,7 @@ the edit was attempted and optionally why not."
   (refactor-apply-changeset (eglot--translate-workspace-edit wedit)
                             :origin origin))
 
-(cl-defun eglot--rename-default
+(cl-defun eglot--rename-bounds
     (&aux region
           (rename-support (eglot-server-capable-or-lose :renameProvider))
           (prepare-support (and (listp rename-support)
@@ -4457,11 +4457,12 @@ the edit was attempted and optionally why not."
                                   :textDocument/prepareRename
                                   (eglot--TextDocumentPositionParams))))
            (cond ((null x) nil)
-                 ((plist-get x :placeholder))
-                 ((plist-get x :defaultBehavior) (thing-at-point 'symbol t))
-                 ((setq region (eglot-range-region x))
-                  (buffer-substring-no-properties (car region) (cdr region))))))
-        (t (thing-at-point 'symbol t))))
+                 ((setq region (and (plist-get x :start)
+                                    (plist-get x :end)
+                                    (eglot-range-region x)))
+                  region)
+                 (t (bounds-of-thing-at-point 'symbol)))))
+        (t (bounds-of-thing-at-point 'symbol))))
 
 (defun eglot--code-action-bounds ()
   "Calculate appropriate bounds depending on region and point."
@@ -4543,8 +4544,8 @@ the edit was attempted and optionally why not."
     ((_backend (eql eglot)) action)
   (eglot-execute (eglot--current-server-or-lose) (oref action data)))
 
-(cl-defmethod refactor-backend-rename-default ((_backend (eql eglot)))
-  (eglot--rename-default))
+(cl-defmethod refactor-backend-rename-bounds ((_backend (eql eglot)))
+  (eglot--rename-bounds))
 
 (cl-defmethod refactor-backend-rename ((_backend (eql eglot)) newname)
   (let ((server (eglot--current-server-or-lose)))
