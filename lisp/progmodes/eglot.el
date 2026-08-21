@@ -4535,23 +4535,21 @@ Register it first if it is one Eglot has never seen."
                                :data a)
                      when (refactor-kind-matches-p
                            (refactor-action-kind ra) kind)
-                     collect ra))))
-    (if callback
-        (progn
-          (eglot--async-request
-           server
-           :textDocument/codeAction
-           (eglot--code-action-params :beg beg :end end :only only
-                                      :triggerKind trigger-kind)
-           :success-fn (lambda (actions)
-                         (funcall callback (funcall convert actions)))
-           :hint :textDocument/codeAction)
-          :async)
-      (funcall convert
-               (eglot--request
-                server
-                :textDocument/codeAction
-                (eglot--code-action-params :beg beg :end end :only only))))))
+                     collect ra)))
+         (params
+          (eglot--code-action-params :beg beg :end end :only only
+                                     :triggerKind trigger-kind)))
+    (cond
+     (callback
+      (eglot--async-request
+       server
+       :textDocument/codeAction
+       params
+       :success-fn (lambda (actions) (funcall callback (funcall convert actions)))
+       :hint :textDocument/codeAction)
+      :async)
+     (t
+      (funcall convert (eglot--request server :textDocument/codeAction params))))))
 
 (cl-defmethod refactor-backend-execute
     ((_backend (eql eglot)) action)
