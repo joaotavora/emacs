@@ -412,10 +412,13 @@ Interactively, BACKEND is chosen to be the first backend in
 ;;;
 ;; The indicator subsystem.  Its state is a single overlay marking
 ;; the bounds of the actions available at point; `refactor-suggestion'
-;; is an ElDoc member computing them, possibly asynchronously.  The
-;; backends wire these things up: Eglot, for one, adds
-;; `refactor-suggestion' to `eldoc-documentation-functions' and
-;; `refactor-mode-line-indicator' to its mode-line format.
+;; is an ElDoc member computing them, possibly asynchronously.
+;; `refactor-suggestion-mode' adds it to
+;; `eldoc-documentation-functions' and cleans up the overlay when
+;; disabled.  The mode's lighter is `refactor-mode-line-indicator',
+;; which shows `refactor-indicator' while the overlay exists, so
+;; turning the mode on is all a backend needs: Eglot, for one, does
+;; it when entering `eglot--managed-mode'.
 
 (defcustom refactor-indications '(eldoc-hint left-fringe margin)
   "How refactor backends indicate there are actions available at point.
@@ -424,8 +427,7 @@ Value is a list of symbols, more than one can be specified:
 - `eldoc-hint': ElDoc is used to hint about at-point actions;
 - `left-fringe': A special indicator appears on the left fringe;
 - `margin': A special indicator appears in the margin;
-- `nearby': A special indicator appears near point;
-- `mode-line': A special indicator appears in the mode-line.
+- `nearby': A special indicator appears near point.
 
 If the list is empty, no hinting happens.
 
@@ -435,14 +437,11 @@ Note additionally:
   `left-fringe' and `margin' are specified, earlier values take
   precedence.
 - The indicators for many of these are customizable via
-  `refactor-indicator' (which see), except for `left-fringe'.
-- `mode-line' only works if the backend's mode-line format includes
-  `refactor-mode-line-indicator' (which see)."
+  `refactor-indicator' (which see), except for `left-fringe'."
   :type '(set
           :tag "Tick the ones you're interested in"
           (const :tag "ElDoc textual hint" eldoc-hint)
           (const :tag "Right besides point" nearby)
-          (const :tag "In mode line" mode-line)
           (const :tag "In left fringe" left-fringe)
           (const :tag "In margin" margin)))
 
@@ -546,20 +545,33 @@ Note additionally:
           (when use-text-p (funcall cb blurb)))))
       (and use-text-p t))))
 
+(define-minor-mode refactor-suggestion-mode
+  "Minor mode for showing refactoring suggestions at point."
+  :init-value nil
+  :lighter refactor-mode-line-indicator
+  (if refactor-suggestion-mode
+      (add-hook 'eldoc-documentation-functions #'refactor-suggestion nil t)
+    (remove-hook 'eldoc-documentation-functions #'refactor-suggestion t)
+    (when (overlay-buffer refactor--suggestion-overlay)
+      (delete-overlay refactor--suggestion-overlay))))
+
+(defconst refactor--mode-line-indicator
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mode-line mouse-1]
+                (refactor--mouse-call 'refactor-at-mouse t))
+    `(:propertize
+      ,refactor-indicator
+      face refactor-indicator-face
+      keymap ,map
+      help-echo "mouse-1: execute actions at point"
+      mouse-face mode-line-highlight)))
+
 (defconst refactor-mode-line-indicator
   '(:eval
-    (when (and (memq 'mode-line refactor-indications)
-               (overlay-buffer refactor--suggestion-overlay))
-      (let ((map (make-sparse-keymap)))
-        (define-key map [mode-line mouse-1]
-                    (refactor--mouse-call 'refactor-at-mouse t))
-        (propertize
-         refactor-indicator
-         'face 'refactor-indicator-face
-         'keymap map
-         'help-echo "mouse-1: execute actions at point"
-         'mouse-face 'mode-line-highlight))))
+    (when (overlay-buffer refactor--suggestion-overlay)
+      '(" " refactor--mode-line-indicator)))
   "Mode line construct for at-point refactoring actions.")
+(put 'refactor-mode-line-indicator 'risky-local-variable t)
 
 ;;;; Kinds
 ;;;

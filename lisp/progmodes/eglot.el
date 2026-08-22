@@ -2400,7 +2400,8 @@ the previous reports for TOKEN.")
     (unless (eglot--stay-out-of-p 'xref)
       (add-hook 'xref-backend-functions #'eglot-xref-backend nil t))
     (unless (eglot--stay-out-of-p 'refactor)
-      (add-hook 'refactor-backend-functions #'eglot-refactor-backend nil t))
+      (add-hook 'refactor-backend-functions #'eglot-refactor-backend nil t)
+      (refactor-suggestion-mode 1))
     (add-hook 'completion-at-point-functions #'eglot-completion-at-point nil t)
     (add-hook 'completion-in-region-mode-hook #'eglot--capf-session-flush nil t)
     (add-hook 'company-after-completion-hook #'eglot--capf-session-flush nil t)
@@ -2421,8 +2422,7 @@ the previous reports for TOKEN.")
     (unless (eglot--stay-out-of-p 'eldoc)
       (dolist (f (list #'eglot-signature-eldoc-function
                        #'eglot-hover-eldoc-function
-                       #'eglot-highlight-eldoc-function
-                       #'refactor-suggestion))
+                       #'eglot-highlight-eldoc-function))
         (add-hook 'eldoc-documentation-functions f t t))
       (eldoc-mode 1))
     (cl-pushnew (current-buffer) (eglot--managed-buffers (eglot-current-server))))
@@ -2454,8 +2454,7 @@ the previous reports for TOKEN.")
     (unless (eglot--stay-out-of-p 'eldoc)
       (dolist (f (list #'eglot-hover-eldoc-function
                        #'eglot-signature-eldoc-function
-                       #'eglot-highlight-eldoc-function
-                       #'refactor-suggestion))
+                       #'eglot-highlight-eldoc-function))
         (remove-hook 'eldoc-documentation-functions f t)))
     (cl-loop for (var . saved-binding) in eglot--saved-bindings
              do (set (make-local-variable var) saved-binding))
@@ -2640,8 +2639,7 @@ If it is activated, also signal textDocument/didOpen."
     eglot-mode-line-session
     eglot-mode-line-error
     eglot-mode-line-pending-requests
-    eglot-mode-line-progress
-    eglot-mode-line-action-suggestion)
+    eglot-mode-line-progress)
   "Mode line construct for customizing Eglot information.
 Meaningful symbols in this construct include:
 
@@ -2656,8 +2654,6 @@ Meaningful symbols in this construct include:
 - `eglot-mode-line-pending-requests': number of pending LSP requests;
 
 - `eglot-mode-line-progress': progress reporter widgets;
-
-- `eglot-mode-line-action-suggestion': LSP code action at point.
 "
   :type '(repeat (choice string symbol))
   :package-version '(Eglot . "1.19"))
@@ -2668,7 +2664,6 @@ Meaningful symbols in this construct include:
 (put 'eglot-mode-line-error 'risky-local-variable t)
 (put 'eglot-mode-line-pending-requests 'risky-local-variable t)
 (put 'eglot-mode-line-progress 'risky-local-variable t)
-(put 'eglot-mode-line-action-suggestion 'risky-local-variable t)
 
 (defun eglot--mode-line-props (thing face defs &optional prepend)
   "Helper for function `eglot--mode-line-format'.
@@ -2762,9 +2757,9 @@ still unanswered LSP requests to the server\n"))))
           (mapconcat #'identity blurbs "\n"))))))
   "Eglot mode line construct for LSP progress reports.")
 
-(defconst eglot-mode-line-action-suggestion
-  refactor-mode-line-indicator
-  "Eglot mode line construct for at-point code actions.")
+(defconst eglot-mode-line-action-suggestion nil)
+(make-obsolete 'eglot-mode-line-action-suggestion
+               "Use refactor-mode instead." 32.1)
 
 (add-to-list
  'mode-line-misc-info
