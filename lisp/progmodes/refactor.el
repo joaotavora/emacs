@@ -40,14 +40,15 @@
 ;;   `refactor-backend-functions'; methods of the `refactor-backend-*'
 ;;   generic functions dispatch on it, in the manner of
 ;;   `xref-backend-functions'.  Unlike Xref, every applicable backend
-;;   contributes.  The `refactor' command asks backends via
+;;   contributes.  The base `refactor' command asks backends via
 ;;   `refactor-backend-actions' what "actions", i.e. potential
 ;;   refactorings, can be carried out for the buffer near point.
 ;;   Actions are presented to the user for selection.  When one is
 ;;   chosen, the backend who provided it is asked again to carry it out
 ;;   via `refactor-backend-execute'.  A common implementation could then
 ;;   (and normally would) compute a changeset and offer to apply it with
-;;   `refactor-apply-changeset'.
+;;   `refactor-apply-changeset'.  There are also `refactor-quickfix' and
+;;   other commands that act as filtered `refactor' that only searc
 ;;
 ;; - Changeset application: `refactor-apply-changeset' takes a
 ;;   description of changes to a project -- edits to files, and the
@@ -203,11 +204,7 @@ wins, so among backends the one earliest in
   (nreverse actions))
 
 (cl-defun refactor--collect
-    (beg end &key rkind callback trigger-kind
-          &aux (slots (mapcar (lambda (backend) (list backend nil nil nil))
-                              (refactor-find-backends)))
-               (actions '())
-               collecting)
+    (beg end &key rkind callback trigger-kind)
   "Gather actions for BEG END from every applicable backend.
 
 If CALLBACK is nil, return the merged list of `refactor-action's.
@@ -215,52 +212,50 @@ If CALLBACK is nil, return the merged list of `refactor-action's.
 If CALLBACK is non-nil, merge results into CALLBACK as backends
 finish, and return the list gathered so far, or `:async' if some
 backend has not finished yet."
-  (cl-labels
-      ((deliver (slot)
-         (when (and (not collecting)
-                    (not (nth 1 slot))
-                    (listp (nth 2 slot)))
-           (setf (nth 1 slot) t)
-           (let ((result (nth 2 slot)))
-             (unless (eq result :async)
-               (setq actions (refactor--merge actions result))
-               (when callback (funcall callback actions))))))
-       (filter (actions)
-         (cl-remove-if-not
-          (lambda (a)
-            (refactor-kind-matches-p (oref a kind) rkind))
-          actions)))
-    (setq collecting t)
-    ;; TODO explain here in a comment what these slots are and how they
-    ;; enable the hybrid maybe-CALLBACK, maybe-retval logic.
-    (dolist (slot slots)
-      (condition-case-unless-debug oops
-          (let ((result
-                 (refactor-backend-actions
-                  (car slot) beg end
-                  :rkind rkind
-                  :trigger-kind trigger-kind
-                  :callback (lambda (result)
-                              (setf (nth 3 slot) t
-                                    (nth 2 slot) (filter result))
-                              (deliver slot)))))
-            ;; A backend may call CALLBACK before returning.  When it
-            ;; does, trust the callback's result over the return value.
-            (unless (nth 3 slot)
-              (setf (nth 2 slot)
-                    (if (listp result) (filter result) result))))
-        (error
-         (message "refactor: backend %S failed: %S"
-                  (car slot) (cdr oops)))))
-    (setq collecting nil)
-    (mapc #'deliver slots))
-  (if callback
-      (if (cl-some (lambda (slot)
-                     (and (null (nth 1 slot)) (eq (nth 2 slot) :async)))
-                   slots)
-          :async
-        actions)
-    actions))
+  (let ((slots
+         (cl-loop for backend in (refactor-find-backends)
+                  collect (list backend nil nil nil)))
+        (actions '()))
+    (cl-labels
+        ((deliver (result slot)
+           (setf actions (refactor--merge actions result)
+                 (car slot) t)
+           (when (and callback
+                      (cl-loop for (_backend . slot) in slots
+                               always (car slot)))
+             (funcall callback actions)))
+         (filter (actions)
+           (cl-remove-if-not
+            (lambda (a)
+              (refactor-kind-matches-p (oref a kind) rkind))
+            actions)))
+      ;; TODO explain here in a comment what these slots are and how they
+      ;; enable the hybrid maybe-CALLBACK, maybe-retval logic.
+      ;; Each "slot" is (DELIVERED-P CALLBACK-CALLED-P)
+      (cl-loop
+       for (backend . slot) in slots
+       do
+       (condition-case-unless-debug oops
+           (let ((result
+                  (refactor-backend-actions
+                   backend beg end
+                   :callback
+                   (and callback
+                        (lambda (result)
+                          (setf (cadr slot) t)
+                          (deliver (filter result) slot)))
+                   :rkind rkind
+                   :trigger-kind trigger-kind)))
+             ;; A backend may even call CALLBACK before returning actual
+             ;; actions.  When it does, trust the callback's result over
+             ;; the return value.
+             (unless (or (cadr slot)
+                         (eq result :async))
+               (deliver (filter result) slot)))
+         (error
+          (message "refactor: backend %S failed: %S"
+                   backend (cdr oops)))))
+      (if callback :async actions))))
 
 ;;;; Commands
 ;;;
@@ -572,6 +567,22 @@ Note additionally:
       '(" " refactor--mode-line-indicator)))
   "Mode line construct for at-point refactoring actions.")
 (put 'refactor-mode-line-indicator 'risky-local-variable t)
+
+;;;; Flymake integration
+;;;
+;; Flymake backends may use these categories if they want their
+;; diagnostics to be clickable.  `refactor-suggestion-mode-map' contains
+;; bindings for `refactor-at-mouse' and `refactor-quickfix-at-mouse'.
+(cl-loop
+ for i from 1
+ for type in '(refactor-note refactor-warning refactor-error)
+ for ftype in '(flymake-note flymake-warning flymake-error)
+ do
+ (put type 'flymake-category ftype)
+ (put type 'flymake-overlay-control
+      `((mouse-face . highlight)
+        (priority . ,(+ 50 i))
+        (keymap . ,refactor-suggestion-mode-map))))
 
 ;;;; Kinds
 ;;;

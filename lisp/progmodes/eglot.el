@@ -3282,17 +3282,6 @@ uses it; didOpen then clears it and recomputes from the new
 
 ;;; Flymake integration
 
-(put 'eglot-note 'flymake-category 'flymake-note)
-(put 'eglot-warning 'flymake-category 'flymake-warning)
-(put 'eglot-error 'flymake-category 'flymake-error)
-
-(cl-loop for i from 1
-         for type in '(eglot-note eglot-warning eglot-error)
-         do (put type 'flymake-overlay-control
-                 `((mouse-face . highlight)
-                   (priority . ,(+ 50 i))
-                   (keymap . ,refactor-suggestion-mode-map))))
-
 (defun eglot--flymake-sniff-diagnostics (beg &optional end)
   "Like `flymake-diagnostics', but for Eglot-specific diagnostics."
   (cl-loop for diag in (flymake-diagnostics beg end)
@@ -3388,11 +3377,11 @@ version the diagnostics pertain to."
                     (report (cdr entry) :stay))))))))))
 
 (defun eglot--flymake-diag-type (severity)
-  "Convert LSP diagnostic SEVERITY to Eglot/Flymake diagnostic type."
-  (cond ((null severity) 'eglot-error)
-        ((<= severity 1) 'eglot-error)
-        ((= severity 2)  'eglot-warning)
-        (t               'eglot-note)))
+  "Convert LSP diagnostic SEVERITY to a refactor/Flymake diagnostic type."
+  (cond ((null severity) 'refactor-error)
+        ((<= severity 1) 'refactor-error)
+        ((= severity 2)  'refactor-warning)
+        (t               'refactor-note)))
 
 (defun eglot--flymake-make-diag (diag-spec version region)
   "Convert LSP diagnostic DIAG-SPEC to Flymake diagnostic.
