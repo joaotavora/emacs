@@ -3412,9 +3412,17 @@ version the diagnostics pertain to."
          (let* ((doc-v eglot--docver)
                 (known-v (car eglot--streamed-diagnostics))
                 (prev-map (caddr eglot--streamed-diagnostics))
-                (diags (if (equal kind "unchanged")
-                           (cdr (assoc token (if (eq known-v doc-v)
-                                                 map prev-map)))
+                (unchanged-p (equal kind "unchanged"))
+                ;; For an "unchanged" report, reuse the diags of the
+                ;; previous report for this token.  Look in `map' first:
+                ;; at a version bump it still holds the freshest copy of
+                ;; the token's diagnostics.  Fall back to `prev-map',
+                ;; since the token's report for the current `known-v'
+                ;; may have been dropped as stale by the version check
+                ;; in `eglot--flymake-handle-push'.
+                (diags (if unchanged-p
+                           (or (cdr (assoc token map))
+                               (cdr (assoc token prev-map)))
                          lsp-diags))
                 probe)
            ;; (trace-values (buffer-name) "lsp-diags" (length lsp-diags)
@@ -3427,29 +3435,47 @@ version the diagnostics pertain to."
                   ;; `doc-v' is greater than (potentially nil)
                   ;; recorded `known-v'.  Save old known-v and map,
                   ;; "inaugurate" new doc-v, report this initial subset,
-                  ;; clearing all existing diagnostics.
-                  (cl-loop for (tk . diags) in map
-                           do (setf (alist-get tk prev-map nil nil #'equal) diags))
-                  (let ((entry (cons token diags)))
-                    (setq eglot--streamed-diagnostics
-                          `(,doc-v (,entry) ,prev-map))
-                    (report (cdr entry) :clear)))
+                  ;; clearing all existing diagnostics.  An "unchanged"
+                  ;; report inaugurates silently: it just carries its
+                  ;; token forward into the new version's map, without
+                  ;; any Flymake activity, since the display provably
+                  ;; cannot change.  (If its reuse failed there is
+                  ;; nothing to carry: leave the old known-v in place
+                  ;; and let some later "full" report inaugurate.)
+                  (unless (and unchanged-p (null diags))
+                    (cl-loop for (tk . diags) in map
+                             do (setf (alist-get tk prev-map nil nil #'equal) diags))
+                    (let ((entry (cons token diags)))
+                      (setq eglot--streamed-diagnostics
+                            `(,doc-v (,entry) ,prev-map))
+                      (unless unchanged-p
+                        (report (cdr entry) :clear)))))
                  ((setq probe (assoc token map))
                   ;; `diags' are an update to an existing report for
-                  ;; this token, for this `doc-v'  Record and report
-                  ;; all to Flymake, clearing all existing diagnostics.
-                  (setcdr probe diags)
-                  (cl-loop for e in map
-                           for m = :clear then :stay
-                           do (report (cdr e) m)))
+                  ;; this token, for this `doc-v'.  For an "unchanged"
+                  ;; report this is pure bookkeeping: the server asserts
+                  ;; the previous report is still accurate, so don't
+                  ;; touch Flymake at all.
+                  (unless unchanged-p
+                    ;; Record and report all to Flymake, clearing all
+                    ;; existing diagnostics.
+                    (setcdr probe diags)
+                    (cl-loop for e in map
+                             for m = :clear then :stay
+                             do (report (cdr e) m))))
                  (t
                   ;; It's the first time we hear about `token' for this
                   ;; already inaugurated `doc-v' add its diagnostics to
                   ;; the map, and report only this subset, not clearing
-                  ;; any old diagnostics.
-                  (let ((entry (cons token diags)))
-                    (push entry map)
-                    (report (cdr entry) :stay))))))))))
+                  ;; any old diagnostics.  For an "unchanged" report,
+                  ;; `diags' are the reused ones and this report is
+                  ;; needed: the token's overlays may have been cleared
+                  ;; by another token's inauguration.  (If reuse failed,
+                  ;; there's nothing to add nor report.)
+                  (unless (and unchanged-p (null diags))
+                    (let ((entry (cons token diags)))
+                      (push entry map)
+                      (report (cdr entry) :stay)))))))))))
 
 (defun eglot--flymake-diag-type (severity)
   "Convert LSP diagnostic SEVERITY to Eglot/Flymake diagnostic type."
@@ -3514,6 +3540,10 @@ may be called multiple times (respecting the protocol of
                  (map (cadr eglot--streamed-diagnostics)))
              (if (and v (< v eglot--docver))
                  (eglot--flymake-report-2 nil :stay)
+               ;; Re-report all tokens.  Besides re-rendering them, this
+               ;; removes, via the first token's :clear, the overlays of
+               ;; any tokens that went silent at a version bump
+               ;; inaugurated by an "unchanged" report.
                (cl-loop for e in map
                         for m = :clear then :stay
                         do (eglot--flymake-report-1 (cdr e) m)))))

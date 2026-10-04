@@ -512,6 +512,155 @@ directory hierarchy."
       (goto-char (point-min))
       (should-error (flymake-goto-next-error 1 '() t)))))
 
+(defun eglot--tests-make-stream-diag (line &optional message)
+  "Make an LSP Diagnostic plist at LINE, with MESSAGE."
+  `(:range (:start (:line ,line :character 0)
+            :end (:line ,line :character 2))
+    :message ,(or message "diag") :severity 1 :code "code" :source "test"))
+
+(defun eglot--tests-send-stream-diag (doc-v &optional kind token diags)
+  "Send a synthetic $/streamDiagnostics notification in current buffer.
+The notification pertains to DOC-V.  KIND is \"full\" by default, with
+DIAGS, a list of LSP diagnostic plists, or \"unchanged\", carrying no
+diagnostics.  TOKEN defaults to \"foo\"."
+  (eglot-handle-notification
+   (eglot-current-server) '$/streamDiagnostics
+   :uri (eglot-path-to-uri (buffer-file-name))
+   :version doc-v
+   :kind (or kind "full")
+   :token (or token "foo")
+   :diagnostics (vconcat (or diags nil))))
+
+(cl-defmacro eglot--tests-with-report-count (&rest body)
+  "Run BODY with REPORT-COUNT counting calls to `eglot--flymake-report-fn'.
+Wrap the current `eglot--flymake-report-fn' in a counting shim and
+restore it afterwards."
+  (declare (indent 0) (debug t))
+  (let ((orig (make-symbol "eglot--tests-orig-report-fn")))
+    `(let* ((,orig eglot--flymake-report-fn)
+            (report-count 0))
+       (setq eglot--flymake-report-fn
+             (lambda (&rest args)
+               (setq report-count (1+ report-count))
+               (apply ,orig args)))
+       (unwind-protect
+           (progn ,@body)
+         (setq eglot--flymake-report-fn ,orig)))))
+
+(ert-deftest eglot-test-stream-diagnostics-unchanged-same-version ()
+  "Test $/streamDiagnostics \"unchanged\" reports for a known token.
+They should be pure no-ops, not touching Flymake."
+  (skip-unless (and (executable-find "rass") (executable-find "ty")))
+  (eglot--with-fixture
+      `(("diag-project" .
+         (("main.py" . "x = 1\n"))))
+    (set-buffer (eglot--find-file-noselect "diag-project/main.py"))
+    (eglot--sniffing (:server-notifications s-notifs)
+      (eglot--tests-connect :server "rass -- ty server")
+      (flymake-start)
+      (eglot--tests-with-report-count
+        (eglot--wait-for (s-notifs 5)
+            (&key method &allow-other-keys)
+          (string= method "$/streamDiagnostics"))
+        (let ((base report-count)
+              (doc-v eglot--docver))
+          ;; A "full" report for an unknown token adds it and reports.
+          (eglot--tests-send-stream-diag
+           doc-v "full" "foo" (list (eglot--tests-make-stream-diag 0)))
+          (should (= report-count (1+ base)))
+          (should (= 1 (length (flymake-diagnostics))))
+          (let ((state eglot--streamed-diagnostics))
+            ;; Same version, known token: no Flymake activity at all.
+            (eglot--tests-send-stream-diag doc-v "unchanged" "foo")
+            (should (= report-count (1+ base)))
+            (should (equal state eglot--streamed-diagnostics))
+            ;; Same version, unknown token: also a no-op.
+            (eglot--tests-send-stream-diag doc-v "unchanged" "never")
+            (should (= report-count (1+ base)))
+            (should (equal state eglot--streamed-diagnostics))
+            (should-not (assoc "never" (cadr eglot--streamed-diagnostics)))
+            (should (= 1 (length (flymake-diagnostics))))))))))
+
+(ert-deftest eglot-test-stream-diagnostics-unchanged-inauguration ()
+  "Test $/streamDiagnostics \"unchanged\" inaugurating a new version.
+It should silently carry its token forward, and later \"full\" reports
+from other tokens should merge in, all without clearing."
+  (skip-unless (and (executable-find "rass") (executable-find "ty")))
+  (eglot--with-fixture
+      `(("diag-project" .
+         (("main.py" . "x = 1\ny = 2\n"))))
+    (set-buffer (eglot--find-file-noselect "diag-project/main.py"))
+    (eglot--sniffing (:server-notifications s-notifs)
+      (eglot--tests-connect :server "rass -- ty server")
+      (flymake-start)
+      (eglot--tests-with-report-count
+        (eglot--wait-for (s-notifs 5)
+            (&key method &allow-other-keys)
+          (string= method "$/streamDiagnostics"))
+        (let* ((base report-count)
+               (v1 eglot--docver))
+          (eglot--tests-send-stream-diag
+           v1 "full" "foo" (list (eglot--tests-make-stream-diag 0)))
+          (should (= report-count (1+ base)))
+          (should (= 1 (length (flymake-diagnostics))))
+          ;; Bump the version; "unchanged" for "foo" inaugurates the
+          ;; new version silently: no Flymake activity, and foo's
+          ;; overlay stays.
+          (setq eglot--docver (1+ eglot--docver))
+          (eglot--tests-send-stream-diag eglot--docver "unchanged" "foo")
+          (should (= report-count (1+ base)))
+          (should (= eglot--docver (car eglot--streamed-diagnostics)))
+          (should (= 1 (length (flymake-diagnostics))))
+          ;; A "full" report from another token merges in.
+          (eglot--tests-send-stream-diag
+           eglot--docver "full" "bar" (list (eglot--tests-make-stream-diag 1)))
+          (should (= report-count (+ 2 base)))
+          (should (= 2 (length (flymake-diagnostics)))))))))
+
+(ert-deftest eglot-test-stream-diagnostics-unchanged-reuse-fresh ()
+  "Test $/streamDiagnostics \"unchanged\" reuses the freshest report.
+When an \"unchanged\" report inaugurates a new version, the reused
+diagnostics should be the token's latest ones, from the version just
+vacated, not older ones."
+  (skip-unless (and (executable-find "rass") (executable-find "ty")))
+  (eglot--with-fixture
+      `(("diag-project" .
+         (("main.py" . "x = 1\ny = 2\n"))))
+    (set-buffer (eglot--find-file-noselect "diag-project/main.py"))
+    (eglot--sniffing (:server-notifications s-notifs)
+      (eglot--tests-connect :server "rass -- ty server")
+      (flymake-start)
+      (eglot--tests-with-report-count
+        (eglot--wait-for (s-notifs 5)
+            (&key method &allow-other-keys)
+          (string= method "$/streamDiagnostics"))
+        (let ((v1 eglot--docver))
+          ;; "foo" reports "old" at version 1.
+          (eglot--tests-send-stream-diag
+           v1 "full" "foo" (list (eglot--tests-make-stream-diag 0 "old")))
+          ;; Version 2: "bar" inaugurates it, "foo" reports "new".
+          (setq eglot--docver (1+ eglot--docver))
+          (eglot--tests-send-stream-diag
+           eglot--docver "full" "bar"
+           (list (eglot--tests-make-stream-diag 1 "bar")))
+          (eglot--tests-send-stream-diag
+           eglot--docver "full" "foo"
+           (list (eglot--tests-make-stream-diag 0 "new")))
+          ;; Version 3: "foo"'s "unchanged" inaugurates it silently,
+          ;; reusing the freshest report ("new", not "old").
+          (setq eglot--docver (1+ eglot--docver))
+          (eglot--tests-send-stream-diag eglot--docver "unchanged" "foo")
+          ;; Run the backend again, as Flymake would, and check the
+          ;; message of the displayed diagnostics.
+          (funcall #'eglot-flymake-backend eglot--flymake-report-fn)
+          (let ((diags (flymake-diagnostics)))
+            (should (= 1 (length diags)))
+            (should (equal "new"
+                           (plist-get
+                            (alist-get 'eglot-lsp-diag
+                                       (flymake-diagnostic-data (car diags)))
+                            :message)))))))))
+
 (ert-deftest eglot-test-basic-symlink ()
   "Test basic symlink support."
   (skip-unless (executable-find "clangd"))
