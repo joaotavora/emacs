@@ -1163,17 +1163,21 @@ report applies to that region."
                       (time-since flymake-check-start-time))))))
     (setf (flymake--state-reported-p state) t)
     ;; All of the above might have influecned the eol overlays, so maybe
-    ;; issue a call to update them.  But to avoid flickering, wait for
-    ;; backends to finish first to avoid flickering when multiple
-    ;; backends touch the same eol overlays.  Also don't update if
-    ;; `flymake-timer' is non-nil, meaning the a scheduled
-    ;; `flymake-start' hasn't yet finished.
-    (when (and flymake-inline-diagnostics
-               (not flymake-timer)
-               (not (cl-set-difference (flymake-running-backends)
-                                       (flymake-reporting-backends))))
-      (flymake--update-all-eol-overlays))
+    ;; issue a call to update them.
+    (flymake--maybe-update-all-eol-overlays)
     (flymake--update-diagnostics-listings (current-buffer))))
+
+(defun flymake--maybe-update-all-eol-overlays ()
+  "Update eol overlays unless a check is pending or still reporting.
+To avoid flickering, wait for backends to finish first, as multiple
+backends may touch the same eol overlays.  Also don't update if
+`flymake-timer' is non-nil, meaning that a scheduled `flymake-start'
+hasn't yet finished."
+  (when (and flymake-inline-diagnostics
+             (not flymake-timer)
+             (not (cl-set-difference (flymake-running-backends)
+                                     (flymake-reporting-backends))))
+    (flymake--update-all-eol-overlays)))
 
 (defun flymake--clear-foreign-diags (state)
   (maphash (lambda (_buffer diags)
@@ -1597,7 +1601,11 @@ Do it only if `flymake-no-changes-timeout' is non-nil."
                :debug "starting syntax check after idle for %s seconds"
                flymake-no-changes-timeout)
 	      (flymake-start t))
-            (setq flymake-timer nil))))
+            (setq flymake-timer nil)
+            ;; Reports made while `flymake-timer' was non-nil, including
+            ;; synchronous ones from `flymake-start' above, didn't
+            ;; update eol overlays.  Do it now, else stale ones linger.
+            (when flymake-mode (flymake--maybe-update-all-eol-overlays)))))
       (current-buffer)))))
 
 ;;;###autoload
