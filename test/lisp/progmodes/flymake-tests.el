@@ -401,6 +401,73 @@ SEVERITY-PREDICATE is used to setup
                (diag-region-substring 5 nil)
                "\n")))))
 
+(defvar flymake-tests--report-fn nil)
+
+(defun flymake-tests--eglotish-backend (report-fn &rest _)
+  "Like Eglot: save REPORT-FN, report \"nothing new\" synchronously."
+  (setq flymake-tests--report-fn report-fn)
+  (funcall report-fn nil :region (cons (point-min) (point-min))))
+
+(defun flymake-tests--push (diags)
+  "Like Eglot handling a server push: clear, then report DIAGS."
+  (funcall flymake-tests--report-fn nil :region (cons (point-min) (point-max)))
+  (funcall flymake-tests--report-fn diags :region (cons (point-min) (point-min))))
+
+(defun flymake-tests--painted-eol-overlays ()
+  (cl-remove-if-not (lambda (o) (and (overlay-get o 'flymake--eol-overlay)
+                                     (overlay-get o 'display)))
+                    (overlays-in (point-min) (point-max))))
+
+(defun flymake-tests--fire-idle-timer ()
+  (let ((timer flymake-timer))
+    (apply (timer--function timer) (timer--args timer))))
+
+(defmacro flymake-tests--with-painted-eol-overlay (&rest body)
+  "Run BODY with point on a diagnostic whose eol overlay is painted."
+  (declare (indent 0) (debug t))
+  (let ((diag (gensym "diag")))
+    `(with-temp-buffer
+       (setq-local trusted-content :all
+                   flymake-inline-diagnostics '((current . fancy))
+                   flymake-diagnostic-functions '(flymake-tests--eglotish-backend)
+                   flymake-no-changes-timeout 0.5)
+       (insert "int a = bogus;\nint b = 2;\n")
+       (let ((,diag (progn (search-backward "bogus")
+                           (flymake-make-diagnostic (current-buffer) (point)
+                                                    (match-end 0) :error
+                                                    "bogus is wrong"))))
+         (let ((flymake-start-on-flymake-mode nil)) (flymake-mode))
+         (flymake-start)
+         (flymake-tests--push (list ,diag)))
+       (flymake--update-current-eol-overlay) ; as if from `post-command-hook'
+       (should (flymake-tests--painted-eol-overlays))
+       (unwind-protect (progn ,@body)
+         (when flymake-timer (cancel-timer flymake-timer))))))
+
+(ert-deftest eol-overlay-unpainted-after-idle-check ()
+  "Eol overlay of a fixed diagnostic is unpainted after an idle check."
+  (flymake-tests--with-painted-eol-overlay
+    (delete-char 5) ; diagnostic's overlay evaporates
+    (insert "1")
+    (flymake-tests--push nil) ; arrives while `flymake-timer' is pending
+    (flymake-tests--fire-idle-timer)
+    (should-not (flymake-tests--painted-eol-overlays))))
+
+(ert-deftest eol-overlay-evaporated-source ()
+  "Post-command eol overlay update copes with evaporated diagnostics."
+  (flymake-tests--with-painted-eol-overlay
+    (delete-char 5) ; diagnostic's overlay evaporates
+    (cancel-timer flymake-timer)
+    (setq flymake-timer nil)
+    (flymake--update-current-eol-overlay)
+    (should-not (flymake-tests--painted-eol-overlays))))
+
+(ert-deftest eol-overlay-current-restyled-after-report ()
+  "A report doesn't unpaint the eol overlay of the diagnostic at point."
+  (flymake-tests--with-painted-eol-overlay
+    (funcall flymake-tests--report-fn nil :region (cons (point-min) (point-min)))
+    (should (flymake-tests--painted-eol-overlays))))
+
 
 
 (provide 'flymake-tests)
